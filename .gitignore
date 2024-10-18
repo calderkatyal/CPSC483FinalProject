@@ -2,13 +2,20 @@
 __pycache__/
 *.py[cod]
 
-# Data files
+# Ignore images and visualizations
+images/
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Ignore data directories and files
 data/
 LMSPS/data/
 LMSPS/downloads/
 LMSPS/*.zip
 
-# IDE and environment files
+# Ignore IDE and environment files
 *.env
 *.DS_Store
 .vscode/
@@ -24,7 +31,7 @@ LMSPS/*.zip
 *.tmp
 *.temp
 
-# Docker files
+# Ignore Docker files
 Dockerfile
 
 # Mac system files
