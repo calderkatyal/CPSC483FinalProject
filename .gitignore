@@ -35,8 +35,5 @@ testVenv/
 # Ignore Docker-related files
 Dockerfile
 
-# Ignore environment files
-environment.yml
-
 # Keep .gitignore
 !.gitignore
