@@ -1,8 +1,8 @@
-# Python cache files
+# Ignore Python cache files
 __pycache__/
 *.py[cod]
 
-# Ignore images and visualizations
+# Ignore images
 images/
 *.png
 *.jpg
@@ -14,6 +14,13 @@ data/
 LMSPS/data/
 LMSPS/downloads/
 LMSPS/*.zip
+LMSPS/**/*.dat  # Exclude all .dat files in LMSPS directory structure
+
+# Ignore large files (this can be adjusted)
+*.zip
+*.tar.gz
+*.gz
+*.bz2
 
 # Ignore IDE and environment files
 *.env
@@ -31,13 +38,14 @@ LMSPS/*.zip
 *.tmp
 *.temp
 
+# Ignore all shell scripts and Markdown files (if you want to limit to Python code only)
+# *.sh
+# *.md
+
 # Ignore Docker files
 Dockerfile
 
-# Mac system files
-*.DS_Store
-
-# Any other specific file types you want to exclude
+# Ignore other build artifacts
 *.egg-info/
 dist/
 build/
