@@ -1,0 +1,3 @@
+[submodule "LMSPS"]
+	path = LMSPS
+	url = git@github.com:JHL-HUST/LMSPS.git

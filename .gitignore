@@ -1,0 +1,37 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Data files
+data/
+LMSPS/data/
+LMSPS/downloads/
+LMSPS/*.zip
+
+# IDE and environment files
+*.env
+*.DS_Store
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+
+# Docker files
+Dockerfile
+
+# Mac system files
+*.DS_Store
+
+# Any other specific file types you want to exclude
+*.egg-info/
+dist/
+build/
+
