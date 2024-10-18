@@ -1,52 +1,42 @@
-# Ignore Python cache files
-__pycache__/
-*.py[cod]
+# Ignore data directories
+/data/
+/LMSPS/data/
+/LMSPS/downloads/
 
-# Ignore images
-images/
+# Ignore image files
 *.png
 *.jpg
 *.jpeg
 *.gif
+*.bmp
+*.svg
 
-# Ignore data directories and files
-data/
-LMSPS/data/
-LMSPS/downloads/
-LMSPS/*.zip
-LMSPS/**/*.dat  # Exclude all .dat files in LMSPS directory structure
-
-# Ignore large files (this can be adjusted)
+# Ignore large non-code files
 *.zip
-*.tar.gz
-*.gz
-*.bz2
+*.dat
+*.dat.test
+*.dat.test_full
 
-# Ignore IDE and environment files
-*.env
-*.DS_Store
-.vscode/
-.idea/
-*.sublime-workspace
-*.sublime-project
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
+# Ignore virtual environment
+testVenv/
 
-# Temporary files
-*.log
-*.tmp
-*.temp
+# Ignore output directories
+/LMSPS/hgb/output/
 
-# Ignore all shell scripts and Markdown files (if you want to limit to Python code only)
-# *.sh
-# *.md
+# Ignore specific large directories
+/LMSPS/hgb/pytorch_sparse/
 
-# Ignore Docker files
+# Ignore Docker-related files
 Dockerfile
 
-# Ignore other build artifacts
-*.egg-info/
-dist/
-build/
+# Ignore environment files
+environment.yml
 
+# Keep .gitignore
+!.gitignore
