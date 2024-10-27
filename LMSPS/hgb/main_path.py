@@ -1,3 +1,4 @@
+#### FIX TO BE COMPATIBLE WITH CPU ####
 import time
 import uuid
 import argparse
@@ -115,12 +116,12 @@ def main(args):
     checkpt_file = checkpt_folder + uuid.uuid4().hex
 
 
-    if args.amp:
+    if args.amp and torch.cuda.is_available() and not args.cpu:
         scalar = torch.cuda.amp.GradScaler()
     else:
         scalar = None
 
-    device = 'cuda:{}'.format(args.gpu) if not args.cpu else 'cpu'
+    device = 'cuda:{}'.format(args.gpu) if torch.cuda.is_available() and not args.cpu else 'cpu'
     if args.dataset != 'IMDB':
         labels_cuda = labels.long().to(device)
     else:
@@ -221,7 +222,8 @@ def main(args):
         # =======
         # Construct network
         # =======
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available() and not args.cpu:
+            torch.cuda.empty_cache()
         gc.collect()
         model = LMSPS(args.embed_size, args.hidden, num_classes, feats.keys(), label_feats.keys(), tgt_type,
             args.dropout, args.input_drop, args.att_drop, args.label_drop,
@@ -257,14 +259,17 @@ def main(args):
 
         for epoch in tqdm(range(args.stage)):
             gc.collect()
-            torch.cuda.synchronize()
+            if torch.cuda.is_available() and not args.cpu:
+                torch.cuda.synchronize()
             start = time.time()
             loss, acc = train(model, feats, label_feats, labels_cuda, loss_fcn, optimizer, train_loader, evaluator, scalar=scalar)
-            torch.cuda.synchronize()
+            if torch.cuda.is_available() and not args.cpu:
+                torch.cuda.synchronize()
             end = time.time()
 
             log = ""#"Epoch {}, training Time(s): {:.4f}, estimated train loss {:.4f}, acc {:.4f}, {:.4f}\n".format(epoch, end - start,loss, acc[0]*100, acc[1]*100)
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available() and not args.cpu:
+                torch.cuda.empty_cache()
             train_times.append(end-start)
 
             start = time.time()
@@ -329,7 +334,8 @@ def main(args):
 
         if len(full_loader):
             model.load_state_dict(torch.load(f'{checkpt_file}.pkl', map_location='cpu'), strict=True)
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available() and not args.cpu:
+                torch.cuda.empty_cache()
             with torch.no_grad():
                 model.eval()
                 raw_preds = []
@@ -432,9 +438,6 @@ def parse_args(args=None):
 if __name__ == '__main__':
     args = parse_args()
 
-    # if args.dataset == 'ACM':
-    #     args.ACM_keep_F = False
-
     args.seed = args.seeds[0]
     print(args)
 
@@ -452,11 +455,9 @@ if __name__ == '__main__':
         print(results)
         results = results[:5]
         mima = list(map(list, zip(*results)))
-        #print(f'micro: {mima[0]}', f'macro: {mima[1]}')
         print(f'micro_mean: {np.mean(mima[0]):.2f}', f'micro_std: {np.std(mima[0]):.2f}')
         print(f'macro_mean: {np.mean(mima[1]):.2f}', f'macro_std: {np.std(mima[1]):.2f}')
     else:
         aver = list(map(list, zip(*results)))
         print(f'micro_aver: {np.mean(aver[0]):.2f}', f'micro_std: {np.std(aver[0]):.2f}')
         print(f'macro_aver: {np.mean(aver[1]):.2f}', f'macro_std: {np.std(aver[1]):.2f}')
-
