@@ -1,4 +1,7 @@
-#### FIX TO BE COMPATIBLE WITH CPU ####
+# Code adapted from Li et al. (2024), "Long-range Meta-path Search on Large-scale Heterogeneous Graphs"
+# Original paper: https://arxiv.org/abs/2307.08430
+# Removed code for non-IMDB datasets
+
 import time
 import uuid
 import argparse
@@ -42,7 +45,7 @@ def main(args):
         flag[val_nid] = 0
         flag[test_nid] = 0
         extra_nid = np.where(flag)[0]
-        print(f'Find {len(extra_nid)} extra nid for dataset {args.dataset}')
+        print(f'Find {len(extra_nid)} extra nid for dataset IMDB')
     else:
         extra_nid = np.array([])
 
@@ -54,26 +57,10 @@ def main(args):
     # =======
     # neighbor aggregation
     # =======
-    if args.dataset == 'DBLP':
-        tgt_type = 'A'
-        node_types = ['A', 'P', 'T', 'V']
-        extra_metapath = []
-    elif args.dataset == 'ACM':
-        tgt_type = 'P'
-        node_types = ['P', 'A', 'C']
-        extra_metapath = []
-    elif args.dataset == 'IMDB':
-        tgt_type = 'M'
-        node_types = ['M', 'A', 'D', 'K']
-        extra_metapath = []
-    elif args.dataset == 'Freebase':
-        tgt_type = '0'
-        node_types = [str(i) for i in range(8)]
-        extra_metapath = []
-    else:
-        assert 0
-    extra_metapath = [ele for ele in extra_metapath if len(ele) > args.num_hops + 1]
-
+    tgt_type = 'M'
+    node_types = ['M', 'A', 'D', 'K']
+    extra_metapath = []
+    
     print(f'Current num hops = {args.num_hops}')
 
     prop_device = 'cpu'
@@ -94,12 +81,8 @@ def main(args):
     for k in keys:
         feats[k] = g.nodes[tgt_type].data.pop(k)
 
-    if args.dataset in ['DBLP', 'ACM', 'IMDB']:
-        data_size = {k: v.size(-1) for k, v in feats.items()}
-        feats = {k: v[init2sort] for k, v in feats.items()}
-
-    else:
-        assert 0
+    data_size = {k: v.size(-1) for k, v in feats.items()}
+    feats = {k: v[init2sort] for k, v in feats.items()}
 
     feats = {k: v for k, v in feats.items() if k in archs[args.arch][0] or k == tgt_type}
 
@@ -110,11 +93,10 @@ def main(args):
     gc.collect()
 
     # =======
-    checkpt_folder = f'./output/{args.dataset}/'
+    checkpt_folder = f'./output/IMDB/'
     if not os.path.exists(checkpt_folder):
         os.makedirs(checkpt_folder)
     checkpt_file = checkpt_folder + uuid.uuid4().hex
-
 
     if args.amp and torch.cuda.is_available() and not args.cpu:
         scalar = torch.cuda.amp.GradScaler()
@@ -122,11 +104,8 @@ def main(args):
         scalar = None
 
     device = 'cuda:{}'.format(args.gpu) if torch.cuda.is_available() and not args.cpu else 'cpu'
-    if args.dataset != 'IMDB':
-        labels_cuda = labels.long().to(device)
-    else:
-        labels = labels.float()
-        labels_cuda = labels.to(device)
+    labels = labels.float()
+    labels_cuda = labels.to(device)
 
     for stage in [0]:
         epochs = args.stage
@@ -136,22 +115,10 @@ def main(args):
         # =======
         label_feats = {}
         if args.label_feats:
-            if args.dataset != 'IMDB':
-                label_onehot = torch.zeros((num_nodes, num_classes))
-                label_onehot[train_nid] = F.one_hot(init_labels[train_nid], num_classes).float()
-            else:
-                label_onehot = torch.zeros((num_nodes, num_classes))
-                label_onehot[train_nid] = init_labels[train_nid].float()
+            label_onehot = torch.zeros((num_nodes, num_classes))
+            label_onehot[train_nid] = init_labels[train_nid].float()
 
-            if args.dataset == 'DBLP':
-                extra_metapath = []
-            elif args.dataset == 'IMDB':
-                extra_metapath = []
-            elif args.dataset == 'ACM':
-                extra_metapath = []
-            else:
-                assert 0
-
+            extra_metapath = []
             extra_metapath = [ele for ele in extra_metapath if len(ele) > args.num_label_hops + 1]
             if len(extra_metapath):
                 max_length = max(args.num_label_hops + 1, max([len(ele) for ele in extra_metapath]))
@@ -170,15 +137,11 @@ def main(args):
 
             gc.collect()
 
-            if args.dataset == 'IMDB':
-                condition = lambda ra,rb,rc,k: True
-                check_acc(label_feats, condition, init_labels, train_nid, val_nid, test_nid, show_test=False, loss_type='bce')
-            else:
-                condition = lambda ra,rb,rc,k: True
-                check_acc(label_feats, condition, init_labels, train_nid, val_nid, test_nid, show_test=True)
+            condition = lambda ra,rb,rc,k: True
+            check_acc(label_feats, condition, init_labels, train_nid, val_nid, test_nid, show_test=False, loss_type='bce')
             print('Involved label keys', label_feats.keys())
 
-            label_feats = {k: v[init2sort] for k,v in label_feats.items() if k in archs[args.arch][1]}   # if k in archs[args.arch][1]
+            label_feats = {k: v[init2sort] for k,v in label_feats.items() if k in archs[args.arch][1]}
 
             prop_toc = datetime.datetime.now()
             print(f'Time used for label prop {prop_toc - prop_tic}')
@@ -232,13 +195,9 @@ def main(args):
         
         model = model.to(device)
         if args.seed == args.seeds[0]:
-            #print(model)
             print("# Params:", get_n_params(model))
 
-        if args.dataset == 'IMDB':
-            loss_fcn = nn.BCEWithLogitsLoss()
-        else:
-            loss_fcn = nn.CrossEntropyLoss()
+        loss_fcn = nn.BCEWithLogitsLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
                                     weight_decay=args.weight_decay)
 
@@ -256,7 +215,6 @@ def main(args):
 
         train_times = []
 
-
         for epoch in tqdm(range(args.stage)):
             gc.collect()
             if torch.cuda.is_available() and not args.cpu:
@@ -267,7 +225,7 @@ def main(args):
                 torch.cuda.synchronize()
             end = time.time()
 
-            log = ""#"Epoch {}, training Time(s): {:.4f}, estimated train loss {:.4f}, acc {:.4f}, {:.4f}\n".format(epoch, end - start,loss, acc[0]*100, acc[1]*100)
+            log = ""
             if torch.cuda.is_available() and not args.cpu:
                 torch.cuda.empty_cache()
             train_times.append(end-start)
@@ -292,17 +250,13 @@ def main(args):
                 loss_val = loss_fcn(raw_preds[trainval_point:valtest_point], labels[trainval_point:valtest_point]).item()
                 loss_test = loss_fcn(raw_preds[valtest_point:total_num_nodes], labels[valtest_point:total_num_nodes]).item()
 
-            if args.dataset != 'IMDB':
-                preds = raw_preds.argmax(dim=-1)
-            else:
-                preds = (raw_preds > 0.).int()
+            preds = (raw_preds > 0.).int()
 
             train_acc = evaluator(preds[:trainval_point], labels[:trainval_point])
             val_acc = evaluator(preds[trainval_point:valtest_point], labels[trainval_point:valtest_point])
             test_acc = evaluator(preds[valtest_point:total_num_nodes], labels[valtest_point:total_num_nodes])
 
             end = time.time()
-            #log += f'evaluation Time: {end-start}, Train loss: {loss_train}, Val loss: {loss_val}, Test loss: {loss_test}\n'
             log += f'Val loss: {loss_val}, Test loss: {loss_test}\n'
             log += 'Train acc: ({:.4f}, {:.4f}), Val acc: ({:.4f}, {:.4f}), Test acc: ({:.4f}, {:.4f}) ({})\n'.format(
                 train_acc[0]*100, train_acc[1]*100, val_acc[0]*100, val_acc[1]*100, test_acc[0]*100, test_acc[1]*100, total_num_nodes-valtest_point)
@@ -325,12 +279,11 @@ def main(args):
             if epoch > 0 and epoch % 10 == 0: 
                 log = log + f'\tCurrent best at epoch {best_epoch} with Val loss {best_val_loss:.4f} ({best_val[0]*100:.4f}, {best_val[1]*100:.4f})' \
                     + f', Test loss {best_test_loss:.4f} ({best_test[0]*100:.4f}, {best_test[1]*100:.4f})'
-            #print(log)
 
         print('average train times', sum(train_times) / len(train_times))
 
         print(f'Best Epoch {best_epoch} at {checkpt_file.split("/")[-1]}\n\tFinal Val loss {best_val_loss:.4f} ({best_val[0]*100:.4f}, {best_val[1]*100:.4f})'
-            + f', Test loss {best_test_loss:.4f} ({best_test[0]*100:.4f}, {best_test[1]*100:.4f})')   # micro  macro
+            + f', Test loss {best_test_loss:.4f} ({best_test[0]*100:.4f}, {best_test[1]*100:.4f})')
 
         if len(full_loader):
             model.load_state_dict(torch.load(f'{checkpt_file}.pkl', map_location='cpu'), strict=True)
@@ -352,25 +305,13 @@ def main(args):
                 raw_preds = torch.cat(raw_preds, dim=0)
             best_pred = torch.cat((best_pred, raw_preds), dim=0)
 
-        #torch.save(best_pred, f'{checkpt_file}.pt')
-
-        if args.dataset != 'IMDB':
-            predict_prob = best_pred.softmax(dim=1)
-        else:
-            predict_prob = torch.sigmoid(best_pred)
+        predict_prob = torch.sigmoid(best_pred)
 
         test_logits = predict_prob[sort2init][test_nid_full]
-        if args.dataset != 'IMDB':
-            pred = test_logits.cpu().numpy().argmax(axis=1)
-            dl.gen_file_for_evaluate(test_idx=test_nid_full, label=pred, file_path=f"./output/{args.dataset}_{args.seed}_{checkpt_file.split('/')[-1]}.txt")
-        else:
-            pred = (test_logits.cpu().numpy()>0.5).astype(int)
-            dl.gen_file_for_evaluate(test_idx=test_nid_full, label=pred, file_path=f"./output/{args.dataset}_{args.seed}_{checkpt_file.split('/')[-1]}.txt", mode='multi')
+        pred = (test_logits.cpu().numpy()>0.5).astype(int)
+        dl.gen_file_for_evaluate(test_idx=test_nid_full, label=pred, file_path=f"./output/IMDB_{args.seed}_{checkpt_file.split('/')[-1]}.txt", mode='multi')
 
-    if args.dataset != 'IMDB':
-        preds = predict_prob.argmax(dim=1, keepdim=True)
-    else:
-        preds = (predict_prob > 0.5).int()
+    preds = (predict_prob > 0.5).int()
     train_acc = evaluator(labels[:trainval_point], preds[:trainval_point])
     val_acc = evaluator(labels[trainval_point:valtest_point], preds[trainval_point:valtest_point])
     test_acc = evaluator(labels[valtest_point:total_num_nodes], preds[valtest_point:total_num_nodes])
@@ -389,7 +330,7 @@ def parse_args(args=None):
     ## For environment costruction
     parser.add_argument("--seeds", nargs='+', type=int, default=[1],
                         help="the seed used in the training")
-    parser.add_argument("--dataset", type=str, default="ogbn-mag")
+    parser.add_argument("--dataset", type=str, default="IMDB")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--cpu", action='store_true', default=False)
     parser.add_argument("--root", type=str, default="../data/")
@@ -428,10 +369,8 @@ def parse_args(args=None):
     parser.add_argument("--patience", type=int, default=50,
                         help="early stop of times of the experiment")
     parser.add_argument("--edge_mask_ratio", type=float, default=0)
-    parser.add_argument('--arch', type=str, default='DBLP')
-    parser.add_argument("--eps", type=float, default=0)   #1e-12
-    parser.add_argument("--ACM_keep_F", action='store_true', default=False,
-                        help="whether to use Field type")
+    parser.add_argument('--arch', type=str, default='IMDB')
+    parser.add_argument("--eps", type=float, default=0)
 
     return parser.parse_args(args)
 
@@ -448,16 +387,10 @@ if __name__ == '__main__':
         result = main(args)
         results.append(result)
     print('results', results)
-    
 
-    if args.dataset == 'IMDB':
-        results.sort(key=lambda x: x[0], reverse=True)
-        print(results)
-        results = results[:5]
-        mima = list(map(list, zip(*results)))
-        print(f'micro_mean: {np.mean(mima[0]):.2f}', f'micro_std: {np.std(mima[0]):.2f}')
-        print(f'macro_mean: {np.mean(mima[1]):.2f}', f'macro_std: {np.std(mima[1]):.2f}')
-    else:
-        aver = list(map(list, zip(*results)))
-        print(f'micro_aver: {np.mean(aver[0]):.2f}', f'micro_std: {np.std(aver[0]):.2f}')
-        print(f'macro_aver: {np.mean(aver[1]):.2f}', f'macro_std: {np.std(aver[1]):.2f}')
+    results.sort(key=lambda x: x[0], reverse=True)
+    print(results)
+    results = results[:5]
+    mima = list(map(list, zip(*results)))
+    print(f'micro_mean: {np.mean(mima[0]):.2f}', f'micro_std: {np.std(mima[0]):.2f}')
+    print(f'macro_mean: {np.mean(mima[1]):.2f}', f'macro_std: {np.std(mima[1]):.2f}')
