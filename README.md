@@ -1,5 +1,5 @@
 **LINUX SETUP:**
-'''
+```
 conda create -n AutoHGNNVenv python=3.10
 
 pip install torch==2.1.0
@@ -25,4 +25,4 @@ git clone https://github.com/Yangxc13/sparse_tools.git --depth=1
 cd sparse_tools
 
 python setup.py develop
-'''
+```
