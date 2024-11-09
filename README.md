@@ -26,3 +26,9 @@ cd sparse_tools
 
 python setup.py develop
 ```
+
+**DOWNLOAD IMDB DATA (CRAWL SCRIPT**
+
+```wget -P $DOWNLOADS_DIR https://github.com/CrawlScript/gnn_datasets/raw/master/HGB/IMDB.zip ```
+
+source: https://github.com/CrawlScript/gnn_datasets/
