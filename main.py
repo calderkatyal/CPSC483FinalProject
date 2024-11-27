@@ -149,6 +149,12 @@ def test() -> Dict[str, List[float]]:
     pred_probs = torch.sigmoid(logits)
     pred = (pred_probs > 0.5).float()
 
+    # Handle cases where no predictions are made
+    no_pred_mask = pred.sum(dim=1) == 0  # Identify rows with no predictions
+    max_indices = torch.argmax(pred_probs, dim=1)  # Get indices of max probabilities
+    pred[no_pred_mask, :] = 0  # Reset rows with no predictions
+    pred[no_pred_mask, max_indices[no_pred_mask]] = 1  # Set max probability index to 1
+
     metrics = []
     for split in ['train_mask', 'val_mask', 'test_mask']:
         mask = hg['movie'][split]

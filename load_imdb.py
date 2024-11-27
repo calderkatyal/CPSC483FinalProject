@@ -120,7 +120,7 @@ class data_loader:
         i = [x[0] for x in li]
         j = [x[1] for x in li]
         return sparse.coo_matrix((data, (i, j)), shape=(self.nodes['total'], self.nodes['total'])).tocsr()
-
+    
     def get_node_type(self, node_id):
         for i in range(len(self.nodes['shift'])):
             if node_id < self.nodes['shift'][i] + self.nodes['count'][i]:
@@ -140,7 +140,6 @@ class data_loader:
                 in_degree[dst_type][i] += degree
     
         return in_degree, out_degree
-
 def load_imdb(feat_type=0, random_state=None):
     prefix = './data/IMDB'
     dl = data_loader(prefix)
@@ -159,10 +158,10 @@ def load_imdb(feat_type=0, random_state=None):
         src_type = str(dl.links['meta'][link_type][0])
         dst_type = str(dl.links['meta'][link_type][1])
         data_dic[(node_type_names[int(src_type)], link_type_dic[link_type][1], node_type_names[int(dst_type)])] = dl.links['data'][link_type].nonzero()
-    
+
     # Create PyG HeteroData object
     hg = pyg.data.HeteroData()
-    
+
     # Add nodes
     for node_type, count in dl.nodes['count'].items():
         hg[node_type_names[node_type]].num_nodes = count
@@ -182,35 +181,21 @@ def load_imdb(feat_type=0, random_state=None):
     num_labels = 5
     label_names = ['Romance', 'Thriller', 'Comedy', 'Action', 'Drama'] 
 
+    train_valid_mask = dl.labels_train['mask'][:movie_num]
     test_mask = dl.labels_test['mask'][:movie_num]
-    test_indices = np.where(test_mask)[0]
-
-    # Put all remaining nodes in train/valid
-    all_indices = np.arange(movie_num)
-    non_test = np.array([i for i in all_indices if i not in test_indices])
-
-    # Split remaining nodes into train/valid
+    train_valid_indices = np.where(train_valid_mask == True)[0]
     val_ratio = 0.2
     np.random.seed(random_state)
-    np.random.shuffle(non_test)
-    split_index = int((1.0 - val_ratio) * len(non_test))
-    train_indices = np.sort(non_test[:split_index])
-    valid_indices = np.sort(non_test[split_index:])
+    random_index = np.random.permutation(len(train_valid_indices))
+    split_index = int((1.0 - val_ratio) * len(train_valid_indices))
+    train_indices = np.sort(train_valid_indices[random_index[:split_index]])
+    valid_indices = np.sort(train_valid_indices[random_index[split_index:]])
 
-    # Create masks
-    train_mask = np.zeros(movie_num, dtype=bool)
-    valid_mask = np.zeros(movie_num, dtype=bool)
-    test_mask = np.zeros(movie_num, dtype=bool)
-
-    train_mask[train_indices] = True
-    valid_mask[valid_indices] = True
-    test_mask[test_indices] = True
-
-    # Print statistics
-    print("\nSplit Statistics:")
-    print(f"Train set: {len(train_indices)} ({len(train_indices)/movie_num*100:.1f}%)")
-    print(f"Valid set: {len(valid_indices)} ({len(valid_indices)/movie_num*100:.1f}%)")
-    print(f"Test set: {len(test_indices)} ({len(test_indices)/movie_num*100:.1f}%)")
+    train_mask = copy.copy(train_valid_mask)
+    valid_mask = copy.copy(train_valid_mask)
+    train_mask[valid_indices] = False
+    valid_mask[train_indices] = False
+    test_indices = np.where(test_mask == True)[0]
 
     return hg, features, labels, num_labels, train_indices, valid_indices, test_indices, \
            th.BoolTensor(train_mask), th.BoolTensor(valid_mask), th.BoolTensor(test_mask), \
