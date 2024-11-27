@@ -1,5 +1,7 @@
 ############################################
-
+# Loosely based on RpHGNN's hgb.py 
+# https://github.com/CrawlScript/RpHGNN/blob/main/rphgnn/datasets/hgb.py
+############################################
 
 import torch as th
 import torch_geometric as pyg
@@ -180,24 +182,36 @@ def load_imdb(feat_type=0, random_state=None):
     num_labels = 5
     label_names = ['Romance', 'Thriller', 'Comedy', 'Action', 'Drama'] 
 
-    train_valid_mask = dl.labels_train['mask'][:movie_num]
     test_mask = dl.labels_test['mask'][:movie_num]
-    train_valid_indices = np.where(train_valid_mask == True)[0]
+    test_indices = np.where(test_mask)[0]
+
+    # Put all remaining nodes in train/valid
+    all_indices = np.arange(movie_num)
+    non_test = np.array([i for i in all_indices if i not in test_indices])
+
+    # Split remaining nodes into train/valid
     val_ratio = 0.2
     np.random.seed(random_state)
-    random_index = np.random.permutation(len(train_valid_indices))
-    split_index = int((1.0 - val_ratio) * len(train_valid_indices))
-    train_indices = np.sort(train_valid_indices[random_index[:split_index]])
-    valid_indices = np.sort(train_valid_indices[random_index[split_index:]])
+    np.random.shuffle(non_test)
+    split_index = int((1.0 - val_ratio) * len(non_test))
+    train_indices = np.sort(non_test[:split_index])
+    valid_indices = np.sort(non_test[split_index:])
 
-    train_mask = copy.copy(train_valid_mask)
-    valid_mask = copy.copy(train_valid_mask)
-    train_mask[valid_indices] = False
-    valid_mask[train_indices] = False
-    test_indices = np.where(test_mask == True)[0]
+    # Create masks
+    train_mask = np.zeros(movie_num, dtype=bool)
+    valid_mask = np.zeros(movie_num, dtype=bool)
+    test_mask = np.zeros(movie_num, dtype=bool)
+
+    train_mask[train_indices] = True
+    valid_mask[valid_indices] = True
+    test_mask[test_indices] = True
+
+    # Print statistics
+    print("\nSplit Statistics:")
+    print(f"Train set: {len(train_indices)} ({len(train_indices)/movie_num*100:.1f}%)")
+    print(f"Valid set: {len(valid_indices)} ({len(valid_indices)/movie_num*100:.1f}%)")
+    print(f"Test set: {len(test_indices)} ({len(test_indices)/movie_num*100:.1f}%)")
 
     return hg, features, labels, num_labels, train_indices, valid_indices, test_indices, \
            th.BoolTensor(train_mask), th.BoolTensor(valid_mask), th.BoolTensor(test_mask), \
            node_type_names, link_type_dic, label_names
-
-
