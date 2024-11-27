@@ -9,18 +9,46 @@ import torch_geometric.transforms as T
 from torch_geometric.nn import HANConv
 from load_imdb import load_imdb, data_loader
 import numpy as np
+from torch_scatter import scatter_mean
 
 # Load the IMDB dataset
 hg, features, labels, num_labels, train_indices, valid_indices, test_indices, \
     train_mask, valid_mask, test_mask, node_type_names, link_type_dic, label_names = load_imdb(feat_type=0, random_state=42)
 
-# Data loader for batch processing, shuffling, etc.
-dl = data_loader('./data/IMDB')
+
+print(f"Training samples: {train_mask.sum() / len(train_mask) * 100}%")
+print(f"Validation samples: {valid_mask.sum() / len(valid_mask) * 100}%")
+print(f"Test samples: {test_mask.sum() / len(test_mask) * 100}%")
+
+# Define metapaths based on your link_type_dic
+metapaths = [
+    [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')],  # MDM
+    [('movie', 'to_actor', 'actor'), ('actor', 'to_movie', 'movie')],          # MAM
+    [('movie', 'to_keyword', 'keyword'), ('keyword', 'to_movie', 'movie')]     # MKM
+]
+
+# Apply metapath transform
+transform = T.AddMetaPaths(
+    metapaths=metapaths,
+    drop_orig_edge_types=False,  # Keep original edges along with metapath edges
+    drop_unconnected_node_types=False  # Keep all node types
+)
+hg = transform(hg)
 
 # Assign features to each node type (movie, director, actor, keyword)
 hg['movie'].x = features  # Original movie features
+
+""""
 for node_type in ['director', 'actor', 'keyword']:
     hg[node_type].x = torch.zeros((hg[node_type].num_nodes, features.shape[1]))  # Placeholder features
+"""
+# CHANGE: Instead of using placeholder features, we will use the average of connected movie features
+for node_type in ['director', 'actor', 'keyword']:
+    related_edges = hg[('movie', f'to_{node_type}', node_type)].edge_index
+    # Get connected movie features and average them
+    node_feats = scatter_mean(hg['movie'].x[related_edges[0]], related_edges[1], 
+                            dim=0, dim_size=hg[node_type].num_nodes)
+    hg[node_type].x = node_feats
 
 # Assign labels and masks
 hg['movie'].y = labels.argmax(dim=1).long()  # Convert one-hot encoded labels to class indices
@@ -38,7 +66,7 @@ hg.link_type_dic = link_type_dic             # Link type dictionary
 hg.label_names = label_names                 # List of label names
 
 # Print each attribute with sensible formatting
-print("Heterogeneous Graph (hg):", hg)
+#print("Heterogeneous Graph (hg):", hg)
 print("Node Features (features) shape:", features.shape)
 print("Labels (labels) shape:", labels.shape)
 print("Number of Labels (num_labels):", num_labels)
@@ -52,7 +80,7 @@ print("Testing Mask (test_mask) shape:", test_mask.shape)
 print("Node Type Names (node_type_names):", node_type_names)
 print("Link Type Dictionary (link_type_dic):", link_type_dic)
 print("Label Names (label_names):", label_names)
-print("Data Loader (dl):", dl)
+
 
 # Print node types with features and their shapes
 print("\nNode Types with Features and their Shapes:")
@@ -71,6 +99,7 @@ class HAN(nn.Module):
             in_channels, hidden_channels, heads=heads,
             dropout=0.6, metadata=hg.metadata()
         )
+
         self.lin = nn.Linear(hidden_channels, out_channels)
 
     def forward(self, x_dict, edge_index_dict):
