@@ -37,3 +37,5 @@ Dockerfile
 
 # Keep .gitignore
 !.gitignore
+
+preprocessed_hg.pt

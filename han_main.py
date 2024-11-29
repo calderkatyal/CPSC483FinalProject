@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 import torch_geometric
 import torch_geometric.transforms as T
-from autohgnn_conv import HANConv
+from torch_geometric.nn.conv import HANConv
 from load_imdb import load_imdb, data_loader
 import numpy as np
 
@@ -56,6 +56,13 @@ hg['movie'].y = labels
 hg['movie'].train_mask = train_mask
 hg['movie'].val_mask = valid_mask
 hg['movie'].test_mask = test_mask
+
+# Calculate features for other nodes
+for node_type in ['director', 'actor', 'keyword']:
+    related_edges = hg[('movie', f'to_{node_type}', node_type)].edge_index
+    node_feats = scatter_mean(features[related_edges[0]], related_edges[1], 
+                            dim=0, dim_size=hg[node_type].num_nodes)
+    hg[node_type].x = node_feats
 
 # Store additional metadata
 hg.num_labels = num_labels
