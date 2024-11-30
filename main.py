@@ -45,10 +45,13 @@ def assign_node_features(hg, features):
     """
     Assign features to all node types using scatter mean
     """
+    # Get device from features tensor
+    device = features.device
+    hg = hg.to(device)
     # Assign movie features directly
     hg['movie'].x = features
-    hg['movie'].y = labels
-    
+    hg['movie'].y = labels.to(device)
+
     # Calculate features for other node types
     node_types = ['director', 'actor', 'keyword']
     for node_type in node_types:
@@ -279,3 +282,12 @@ for epoch in range(1, 200):
 # Load best model
 if best_state is not None:
     model.load_state_dict(best_state['model_state'])
+
+# Evaluate best model
+test_metrics = test()
+print("\nFinal test metrics:")
+print(f"Micro F1: {test_metrics['micro_f1'][2]:.4f}")
+print(f"Macro F1: {test_metrics['macro_f1'][2]:.4f}")
+
+# Save best model
+torch.save(model.state_dict(), 'best_model.pth')

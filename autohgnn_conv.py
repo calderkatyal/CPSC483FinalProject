@@ -131,25 +131,19 @@ class AutoHGNNConv(MessagePassing):
         for metapath_name, data in self.metapath_data.items():
             paths = data['paths']
             node_types = data['node_types_list']
-            dst_type = node_types[-1]
+            dst_type = node_types[0] 
             
-            # Gather projected features for all nodes in paths
-            path_features = []
-            for pos, node_type in enumerate(node_types):
-                node_indices = paths[:, pos]
-                pos_features = x_node_dict[node_type].index_select(0, node_indices)
-                path_features.append(pos_features)
-            
-            # Stack and mean pool [num_instances, path_length, heads, dim]
-            path_features = torch.stack(path_features, dim=1)
-            x_src = torch.mean(path_features, dim=1)  # [num_instances, heads, dim]
-            x_dst = x_node_dict[dst_type]
+            # Encode metapath instances
+            x_src = self.mean_encoder(paths, node_types, x_node_dict)  # [num_instances, heads, dim]
+            x_dst = x_node_dict[dst_type] 
+
 
             # Create edge index for instance aggregation
             edge_index = torch.stack([
                 torch.arange(len(paths), device=paths.device),
-                paths[:, -1]
+                paths[:, 0] 
             ])
+
 
             # Instance-level attention aggregation
             edge_type = f'metapath_{metapath_name}'
@@ -160,7 +154,7 @@ class AutoHGNNConv(MessagePassing):
             
             # Propagate to aggregate instances
             out = self.propagate(edge_index, x=(x_src, x_dst),
-                            alpha=(alpha_src, alpha_dst))
+                     alpha=(alpha_src, alpha_dst))
             
             out = F.relu(out)
             out_dict[dst_type].append(out)
@@ -177,6 +171,35 @@ class AutoHGNNConv(MessagePassing):
             return out_dict, semantic_attn_dict
 
         return out_dict
+    def mean_encoder(self,
+        paths: Tensor,
+        node_types: List[str],
+        x_node_dict: Dict[str, Tensor]
+    ) -> Tensor:
+        """
+        Encodes metapath instances using mean pooling over node features.
+
+        Args:
+            paths (Tensor): Tensor of shape [num_instances, path_length], 
+                            containing indices of nodes in the metapath.
+            node_types (List[str]): List of node types in the metapath.
+            x_node_dict (Dict[str, Tensor]): Dictionary mapping node types to 
+                                            their projected feature tensors.
+
+        Returns:
+            Tensor: Encoded metapath instance features of shape 
+                    [num_instances, heads, dim].
+        """
+        # Gather projected features for all nodes in paths
+        path_features = []
+        for pos, node_type in enumerate(node_types):
+            node_indices = paths[:, pos]
+            pos_features = x_node_dict[node_type].index_select(0, node_indices)
+            path_features.append(pos_features)
+        # Stack and mean pool [num_instances, path_length, heads, dim]
+        path_features = torch.stack(path_features, dim=1)
+        return torch.mean(path_features, dim=1)  # [num_instances, heads, dim]
+
 
     def message(self, x_j: Tensor, alpha_i: Tensor, alpha_j: Tensor,
                 index: Tensor, ptr: Optional[Tensor],
