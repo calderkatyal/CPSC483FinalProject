@@ -15,6 +15,7 @@ from autohgnn_conv import AutoHGNNConv
 
 preprocessed_data_path = 'preprocessed_hg.pt'
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load the IMDB dataset
 hg, features, labels, num_labels, train_indices, valid_indices, test_indices, \
@@ -40,13 +41,10 @@ print(f"Edge types: {hg.edge_types}")
 for node_type in hg.node_types:
     print(f"Number of {node_type} nodes: {hg[node_type].num_nodes}")
 
-# Placement: Right after feature assignment and before metapath transform
-# Assign features to all nodes (add this before metapath calculation)
 def assign_node_features(hg, features):
     """
     Assign features to all node types using scatter mean
     """
-    
     # Assign movie features directly
     hg['movie'].x = features
     hg['movie'].y = labels
@@ -75,15 +73,21 @@ def assign_node_features(hg, features):
 
 if os.path.exists(preprocessed_data_path):
     print("Loading preprocessed data...")
-    saved_data = torch.load(preprocessed_data_path, map_location=torch.device('cpu'))
+    saved_data = torch.load(preprocessed_data_path, map_location=device)
     hg = saved_data['hg']
     metapath_data = saved_data['metapath_data']
     node_features = saved_data['features']
 else:
+    # Move tensors to device first
+    features = features.to(device)
+    labels = labels.to(device)
+    train_mask = train_mask.to(device)
+    valid_mask = valid_mask.to(device)
+    test_mask = test_mask.to(device)
+    
     hg = assign_node_features(hg, features)
 
     node_features = {}
-
     # Store node features
     for node_type in hg.node_types:
         node_features[node_type] = hg[node_type].x
@@ -103,11 +107,10 @@ else:
     for node_type in hg.node_types:
         print(f"Number of {node_type} nodes: {hg[node_type].num_nodes}")
 
-
+    # Assign masks using PyG's convention (val_mask instead of valid_mask)
     hg['movie'].train_mask = train_mask
-    hg['movie'].val_mask = valid_mask
+    hg['movie'].val_mask = valid_mask  # Using valid_mask from data loader but assigning as val_mask
     hg['movie'].test_mask = test_mask
-
 
     # Store additional metadata
     hg.num_labels = num_labels
@@ -118,22 +121,20 @@ else:
     hg.link_type_dic = link_type_dic
     hg.label_names = label_names
 
-    
-
     # Save preprocessed data
     torch.save({'hg': hg, 'metapath_data': metapath_data, 'features': node_features}, preprocessed_data_path)
 
-#Print the first few lines of metapath_data
+# Move graph to device if not already there
+hg = hg.to(device)
+
+# Print metapath data and feature shapes
 firstpairs = {k: metapath_data[k] for k in list(metapath_data)[:5]}
 print("\nPRINTING FIRST FEW PAIRS OF METAPATH DATA")
 print(firstpairs)
 
-# Print shapes of feature tensors for each node type
-
 for node_type, feat_tensor in node_features.items():
     print(f"{node_type} features shape: {feat_tensor.shape}")
 
-# Define AutoHGNN model
 class AutoHGNN(nn.Module):
     def __init__(self, in_channels: Union[int, Dict[str, int]],
                  out_channels: int, hidden_channels=128, heads=8):
@@ -143,8 +144,8 @@ class AutoHGNN(nn.Module):
             heads=heads,
             dropout=0.6, 
             metadata=hg.metadata(),
-            metapath_data=metapath_data,  # Add this
-            node_features=node_features    # Add this
+            metapath_data=metapath_data,
+            node_features=node_features
         )
         self.lin = nn.Linear(hidden_channels, out_channels)
 
@@ -153,12 +154,10 @@ class AutoHGNN(nn.Module):
         out = self.lin(out['movie'])
         return out
 
-# Initialize model with in_channels for ALL node types
+# Initialize model
 in_channels = {node_type: node_features[node_type].shape[1] for node_type in node_features}
 model = AutoHGNN(in_channels=in_channels, out_channels=num_labels)
-# Set device
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-hg, model = hg.to(device), model.to(device)
+model = model.to(device)
 
 # Initialize lazy modules
 with torch.no_grad():
@@ -167,7 +166,6 @@ with torch.no_grad():
 # Optimizer setup
 optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.001)
 
-# Training function
 def train() -> float:
     model.train()
     optimizer.zero_grad()
@@ -178,7 +176,6 @@ def train() -> float:
     optimizer.step()
     return float(loss)
 
-# Testing function
 @torch.no_grad()
 def test() -> Dict[str, List[float]]:
     model.eval()
@@ -193,9 +190,9 @@ def test() -> Dict[str, List[float]]:
     pred[no_pred_mask, max_indices[no_pred_mask]] = 1
 
     metrics = []
-    for split in ['train_mask', 'val_mask', 'test_mask']:
+    for split in ['train_mask', 'val_mask', 'test_mask']:  # Using PyG's convention
         mask = hg['movie'][split]
-        y_true = labels[mask]
+        y_true = hg['movie'].y[mask]
         y_pred = pred[mask]
         
         # Calculate Micro F1
