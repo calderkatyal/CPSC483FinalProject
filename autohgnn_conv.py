@@ -112,90 +112,6 @@ class AutoHGNNConv(MessagePassing):
         self.k_lin.reset_parameters()
         glorot(self.q)
 
-    def get_metapath_instance_encoding(self, paths: Tensor, node_types: List[str]) -> Tensor:
-        """
-        Get mean encoding for metapath instances.
-        """
-        path_features = []
-        for pos, node_type in enumerate(node_types):
-            node_indices = paths[:, pos]
-            pos_features = self.node_features[node_type][node_indices]
-            projected_features = self.proj[node_type](pos_features)
-            path_features.append(projected_features)
-            
-        path_features = torch.stack(path_features, dim=1)
-        mean_features = torch.mean(path_features, dim=1)
-        H, D = self.heads, self.out_channels // self.heads
-        return mean_features.view(-1, H, D)
-    def forward(
-        self,
-        x_dict: Dict[NodeType, Tensor],
-        edge_index_dict: Dict[EdgeType, Adj],
-        return_semantic_attention_weights: bool = False,
-        batch_size: int = 1024,
-    ) -> Union[Dict[NodeType, OptTensor], Tuple[Dict[NodeType, OptTensor],
-                                                Dict[NodeType, OptTensor]]]:
-        H, D = self.heads, self.out_channels // self.heads
-        x_node_dict, out_dict = {}, {}
-
-        # Project node features
-        for node_type, x in x_dict.items():
-            x_node_dict[node_type] = self.proj[node_type](x).view(-1, H, D)
-            out_dict[node_type] = []
-
-        # Process each metapath
-        for metapath_name, data in self.metapath_data.items():
-            paths = data['paths']
-            node_types = data['node_types_list']
-            dst_type = node_types[-1]
-            
-            # Initialize output tensor for all nodes of dst_type
-            dst_size = x_dict[dst_type].size(0)
-            metapath_out = torch.zeros(dst_size, self.out_channels, device=paths.device)
-            
-            num_batches = (len(paths) + batch_size - 1) // batch_size
-            for i in range(num_batches):
-                start_idx = i * batch_size
-                end_idx = min((i + 1) * batch_size, len(paths))
-                batch_paths = paths[start_idx:end_idx]
-                
-                x_src = self.get_metapath_instance_encoding(batch_paths, node_types)
-                x_dst = x_node_dict[dst_type]
-                
-                edge_index = torch.stack([
-                    torch.arange(len(batch_paths), device=paths.device),
-                    batch_paths[:, -1]
-                ])
-
-                edge_type = f'metapath_{metapath_name}'
-                lin_src = self.lin_src[edge_type]
-                lin_dst = self.lin_dst[edge_type]
-                alpha_src = (x_src * lin_src).sum(dim=-1)
-                alpha_dst = (x_dst * lin_dst).sum(dim=-1)
-                
-                # propagate does the instance aggregation for us
-                batch_out = self.propagate(edge_index, x=(x_src, x_dst),
-                                alpha=(alpha_src, alpha_dst))
-                batch_out = F.relu(batch_out)
-                
-                # Add to target nodes (batch_out is already aggregated per target node)
-                metapath_out[batch_paths[:, -1].unique()] += batch_out
-
-            # Add aggregated result for this metapath
-            out_dict[dst_type].append(metapath_out)
-
-        # Semantic attention
-        semantic_attn_dict = {}
-        for node_type, outs in out_dict.items():
-            out, attn = group(outs, self.q, self.k_lin)
-            out_dict[node_type] = out
-            semantic_attn_dict[node_type] = attn
-
-        if return_semantic_attention_weights:
-            return out_dict, semantic_attn_dict
-
-        return out_dict
-    """"
     def forward(
         self,
         x_dict: Dict[NodeType, Tensor],
@@ -206,9 +122,9 @@ class AutoHGNNConv(MessagePassing):
         H, D = self.heads, self.out_channels // self.heads
         x_node_dict, out_dict = {}, {}
 
-        # Project node features
-        for node_type, x in x_dict.items():
-            x_node_dict[node_type] = self.proj[node_type](x).view(-1, H, D)
+        # Project node features once at start
+        for node_type in self.node_features.keys():
+            x_node_dict[node_type] = self.proj[node_type](self.node_features[node_type]).view(-1, H, D)
             out_dict[node_type] = []
 
         # Process each metapath
@@ -217,41 +133,50 @@ class AutoHGNNConv(MessagePassing):
             node_types = data['node_types_list']
             dst_type = node_types[-1]
             
-            # Get mean encoding for each metapath instance
-            x_src = self.get_metapath_instance_encoding(paths, node_types)
+            # Gather projected features for all nodes in paths
+            path_features = []
+            for pos, node_type in enumerate(node_types):
+                node_indices = paths[:, pos]
+                pos_features = x_node_dict[node_type].index_select(0, node_indices)
+                path_features.append(pos_features)
+            
+            # Stack and mean pool [num_instances, path_length, heads, dim]
+            path_features = torch.stack(path_features, dim=1)
+            x_src = torch.mean(path_features, dim=1)  # [num_instances, heads, dim]
             x_dst = x_node_dict[dst_type]
-            
-            # Create edge index connecting instances to target nodes
+
+            # Create edge index for instance aggregation
             edge_index = torch.stack([
-            torch.arange(len(paths)),  # Row 0: instance indices (0 to num_instances-1) to index x_src
-            paths[:, -1]               # Row 1: target node indices to index x_dst
+                torch.arange(len(paths), device=paths.device),
+                paths[:, -1]
             ])
 
-            # Use same attention mechanism as before for aggregating instances
+            # Instance-level attention aggregation
             edge_type = f'metapath_{metapath_name}'
             lin_src = self.lin_src[edge_type]
             lin_dst = self.lin_dst[edge_type]
             alpha_src = (x_src * lin_src).sum(dim=-1)
             alpha_dst = (x_dst * lin_dst).sum(dim=-1)
             
+            # Propagate to aggregate instances
             out = self.propagate(edge_index, x=(x_src, x_dst),
-                               alpha=(alpha_src, alpha_dst))
+                            alpha=(alpha_src, alpha_dst))
             
             out = F.relu(out)
             out_dict[dst_type].append(out)
 
-        # Same semantic attention across different metapaths
+        # Semantic attention across metapaths
         semantic_attn_dict = {}
         for node_type, outs in out_dict.items():
-            out, attn = group(outs, self.q, self.k_lin)
-            out_dict[node_type] = out
-            semantic_attn_dict[node_type] = attn
+            if len(outs) > 0:  # Only process if we have any metapaths for this node type
+                out, attn = group(outs, self.q, self.k_lin)
+                out_dict[node_type] = out
+                semantic_attn_dict[node_type] = attn
 
         if return_semantic_attention_weights:
             return out_dict, semantic_attn_dict
 
         return out_dict
-    """
 
     def message(self, x_j: Tensor, alpha_i: Tensor, alpha_j: Tensor,
                 index: Tensor, ptr: Optional[Tensor],
