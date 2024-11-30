@@ -192,6 +192,8 @@ class MetaPathAdd(BaseTransform):
             data.metapath_dict[new_edge_type] = metapath
 
             # Collect features for each path
+
+            """
             features = []
             for path in tqdm(current_paths, desc='Collecting features'):
                 node_features = []
@@ -200,14 +202,15 @@ class MetaPathAdd(BaseTransform):
                     node_feat = data[node_type].x[idx]
                     node_features.append(node_feat.tolist())
                 features.append(node_features)
+            """
 
-            # Map metapath index to name (you can customize the naming as needed)
+            # Map metapath index to name 
             metapath_key = f'metapath_{j}'
-            metapath_name = metapath_key  # You can customize the name if desired
+            metapath_name = metapath_key 
 
             metapath_data[metapath_name] = {
-                'paths': torch.tensor(current_paths, dtype=torch.long),
-                'features': torch.tensor(features, dtype=torch.float32),
+                torch.tensor(current_paths, dtype=torch.long),
+                #'features': torch.tensor(features, dtype=torch.float32),
             }
 
         postprocess(data, edge_types, self.drop_orig_edge_types,

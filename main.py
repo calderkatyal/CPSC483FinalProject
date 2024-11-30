@@ -15,6 +15,7 @@ from MetaPathAdd import MetaPathAdd
 
 preprocessed_data_path = 'preprocessed_hg.pt'
 
+
 # Load the IMDB dataset
 hg, features, labels, num_labels, train_indices, valid_indices, test_indices, \
     train_mask, valid_mask, test_mask, node_type_names, link_type_dic, label_names = load_imdb(feat_type=0, random_state=42)
@@ -77,8 +78,15 @@ if os.path.exists(preprocessed_data_path):
     saved_data = torch.load(preprocessed_data_path, map_location=torch.device('cpu'))
     hg = saved_data['hg']
     metapath_data = saved_data['metapath_data']
+    node_features = saved_data['features']
 else:
     hg = assign_node_features(hg, features)
+
+    node_features = {}
+
+    # Store node features
+    for node_type in hg.node_types:
+        node_features[node_type] = hg[node_type].x
 
     # Apply metapath transform
     transform = MetaPathAdd(
@@ -110,8 +118,19 @@ else:
     hg.link_type_dic = link_type_dic
     hg.label_names = label_names
 
+    
+
     # Save preprocessed data
-    torch.save({'hg': hg, 'metapath_data': metapath_data}, preprocessed_data_path)
+    torch.save({'hg': hg, 'metapath_data': metapath_data, 'features': node_features}, preprocessed_data_path)
+    
+#Print the first few lines of metapath_data
+firstpairs = {k: metapath_data[k] for k in list(metapath_data)[:5]}
+print("\nPRINTING FIRST FEW PAIRS OF METAPATH DATA")
+print(firstpairs)
+
+# Print shapes of feature tensors for each node type
+for node_type, feat_tensor in node_features.items():
+    print(f"{node_type} features shape: {feat_tensor.shape}")
 
 # Define HAN model
 class HAN(nn.Module):
