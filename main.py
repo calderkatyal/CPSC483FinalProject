@@ -6,12 +6,12 @@ import torch.nn.functional as F
 from torch import nn
 import torch_geometric
 import torch_geometric.transforms as T
-from torch_geometric.nn.conv import HANConv
 from load_imdb import load_imdb, data_loader
 import numpy as np
 from torch_scatter import scatter_mean
 from typing import Tuple
 from MetaPathAdd import MetaPathAdd
+from autohgnn_conv import AutoHGNNConv
 
 preprocessed_data_path = 'preprocessed_hg.pt'
 
@@ -122,36 +122,40 @@ else:
 
     # Save preprocessed data
     torch.save({'hg': hg, 'metapath_data': metapath_data, 'features': node_features}, preprocessed_data_path)
-    
+
 #Print the first few lines of metapath_data
 firstpairs = {k: metapath_data[k] for k in list(metapath_data)[:5]}
 print("\nPRINTING FIRST FEW PAIRS OF METAPATH DATA")
 print(firstpairs)
 
 # Print shapes of feature tensors for each node type
+
 for node_type, feat_tensor in node_features.items():
     print(f"{node_type} features shape: {feat_tensor.shape}")
 
-# Define HAN model
-class HAN(nn.Module):
+# Define AutoHGNN model
+class AutoHGNN(nn.Module):
     def __init__(self, in_channels: Union[int, Dict[str, int]],
                  out_channels: int, hidden_channels=128, heads=8):
         super().__init__()
-        self.han_conv = HANConv(
-            in_channels, hidden_channels, heads=heads,
-            dropout=0.6, metadata=hg.metadata()
+        self.autohgnn_conv = AutoHGNNConv(
+            in_channels, hidden_channels, 
+            heads=heads,
+            dropout=0.6, 
+            metadata=hg.metadata(),
+            metapath_data=metapath_data,  # Add this
+            node_features=node_features    # Add this
         )
         self.lin = nn.Linear(hidden_channels, out_channels)
 
     def forward(self, x_dict, edge_index_dict):
-        out = self.han_conv(x_dict, edge_index_dict)
+        out = self.autohgnn_conv(x_dict, edge_index_dict)
         out = self.lin(out['movie'])
         return out
 
-# Initialize model with only movie features
-model = HAN(in_channels={'movie': features.shape[1]},
-            out_channels=num_labels)
-
+# Initialize model with in_channels for ALL node types
+in_channels = {node_type: node_features[node_type].shape[1] for node_type in node_features}
+model = AutoHGNN(in_channels=in_channels, out_channels=num_labels)
 # Set device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 hg, model = hg.to(device), model.to(device)

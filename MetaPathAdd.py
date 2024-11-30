@@ -65,14 +65,14 @@ class MetaPathAdd(BaseTransform):
         data = AddMetaPaths(metapaths)(data)
 
         print(data.edge_types)
-        >>> [("author", "to", "paper"), ("paper", "to", "author"),
+        [("author", "to", "paper"), ("paper", "to", "author"),
              ("paper", "to", "term"), ("paper", "to", "conference"),
              ("term", "to", "paper"), ("conference", "to", "paper"),
              ("paper", "metapath_0", "paper"),
              ("author", "metapath_1", "conference")]
 
         print(data.metapath_dict)
-        >>> {("paper", "metapath_0", "paper"): [("paper", "conference"),
+        {("paper", "metapath_0", "paper"): [("paper", "conference"),
                                                 ("conference", "paper")],
              ("author", "metapath_1", "conference"): [("author", "paper"),
                                                       ("paper", "conference")]}
@@ -208,16 +208,19 @@ class MetaPathAdd(BaseTransform):
             metapath_key = f'metapath_{j}'
             metapath_name = metapath_key 
 
+           
+
             metapath_data[metapath_name] = {
-                torch.tensor(current_paths, dtype=torch.long),
+                'node_types_list': [metapath[0][0]] + [e[2] for e in metapath],
+                'paths':torch.tensor(current_paths, dtype=torch.long),
                 #'features': torch.tensor(features, dtype=torch.float32),
             }
+            
 
         postprocess(data, edge_types, self.drop_orig_edge_types,
                     self.keep_same_node_type, self.drop_unconnected_node_types)
 
         return data, metapath_data  # Return the data and the metapath_data dictionary
-
 
     def _edge_index(
         self,
