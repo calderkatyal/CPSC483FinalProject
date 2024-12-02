@@ -18,7 +18,6 @@ def extract_all_metapath_instances(hg, metapath):
     
     # For each start node
     for start_node in range(hg[src_type].num_nodes):
-        current_nodes = {start_node}
         paths = [[start_node]]
         
         # Follow the metapath
@@ -128,12 +127,6 @@ def build_magnn_style_graph():
     new_hg.train_indices = train_indices
     new_hg.valid_indices = valid_indices
     new_hg.test_indices = test_indices
-
-    for mp_idx, metapath in enumerate(metapaths):
-        # Get node types in order
-        node_types = [edge[0] for edge in metapath] + [metapath[-1][2]]
-        metapath_name = f"metapath_{mp_idx}"
-        new_hg[('movie', metapath_name, 'movie')].node_types = node_types
     
     return new_hg, metapath_instances
 
@@ -238,22 +231,12 @@ class AutoHGNN(nn.Module):
             dropout=0.6,
             metadata=hg.metadata()
         )
-        # Note: hidden_channels * heads to match MAGNN's concatenation of heads
-        self.lin = nn.Linear(hidden_channels * heads, out_channels)
+        self.lin = nn.Linear(hidden_channels, out_channels)
 
     def forward(self, x_dict, edge_index_dict, metapath_dict):
-        # Process with HAN layer
-        out = self.han_conv(x_dict, edge_index_dict, metapath_dict, hg)
-        # Apply final transformation
+        out = self.han_conv(x_dict, edge_index_dict, metapath_dict)
         out = self.lin(out['movie'])
         return out
-def init_model():
-    in_channels = {node_type: hg[node_type].x.size(1) for node_type in hg.node_types}
-    model = AutoHGNN(in_channels=in_channels, 
-                    out_channels=hg.num_labels,
-                    hidden_channels=64,  # Adjust as needed
-                    heads=8)            # Adjust as needed
-    return model
 
 if __name__ == "__main__":
     # Get graph with metapath instances
@@ -264,17 +247,14 @@ if __name__ == "__main__":
     
     # Model initialization
     in_channels = {node_type: hg[node_type].x.size(1) for node_type in hg.node_types}
-    model = init_model()
+    model = AutoHGNN(in_channels=in_channels, out_channels=hg.num_labels)
     
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nUsing device: {device}")
     hg, model = hg.to(device), model.to(device)
     
-    # Check requires_grad for parameters
-    print("\nChecking requires_grad status of model parameters:")
-    for name, param in model.named_parameters():
-        print(f"{name}: requires_grad={param.requires_grad}")
+    
     # Get metapath indices dict for model
     metapath_dict = {f"metapath_{i}": hg[('movie', f"metapath_{i}", 'movie')].metapath_indices 
                      for i in range(len(hg.metapath_dict))}
@@ -302,15 +282,6 @@ if __name__ == "__main__":
         loss = F.binary_cross_entropy_with_logits(out[mask], hg['movie'].y[mask])
         loss.backward()
         optimizer.step()
-
-            # Print gradient norms
-        total_norm = 0
-        for p in model.parameters():
-            if p.grad is not None:
-                param_norm = p.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-        total_norm = total_norm ** 0.5
-        print(f"Total gradient norm: {total_norm:.4f}")
         
         # Evaluation
         model.eval()

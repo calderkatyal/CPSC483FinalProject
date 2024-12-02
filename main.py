@@ -12,6 +12,7 @@ from torch_scatter import scatter_mean
 from typing import Tuple
 from MetaPathAdd import MetaPathAdd
 from autohgnn_conv import AutoHGNNConv
+import argparse
 
 preprocessed_data_path = 'preprocessed_hg.pt'
 
@@ -179,6 +180,65 @@ def train() -> float:
     optimizer.step()
     return float(loss)
 
+def training_schedule(lam: float, t: int, T: int, scheduler: str) -> float:
+    """
+    Implementation of Algorithm 2: Strategize Training Schedule
+    
+    Args:
+        lam: Initial proportion of nodes (λ₀)
+        t: Current epoch
+        T: Epoch when scheduler reaches 1.0
+        scheduler: Type of scheduler ('linear', 'root', or 'geom')
+    """
+    if t >= T:
+        return 1.0
+    
+    if scheduler == 'linear':
+        return min(1.0, lam + (1 - lam) * t/T)
+    elif scheduler == 'root':
+        return min(1.0, np.sqrt(lam**2 + (1 - lam**2) * t/T))
+    elif scheduler == 'geom':
+        return min(1.0, 2**(np.log2(lam) - np.log2(lam) * t/T))
+    else:
+        raise ValueError(f"Unknown scheduler type: {scheduler}")
+def train_with_lts(epoch: int, 
+                   model: torch.nn.Module,
+                   optimizer: torch.optim.Optimizer,
+                   hg: dict,
+                   lam: float = 0.2,
+                   T: int = 50,
+                   scheduler: str = 'linear') -> float:
+    """
+    Implementation of Algorithm 1: LTS Nodes Difficulty Measure and Training Schedule
+    """
+    model.train()
+    optimizer.zero_grad()
+    
+    # Step 1: Calculate loss (with reduction='none' to get per-node losses)
+    out = model(hg.x_dict, hg.edge_index_dict)
+    mask = hg['movie'].train_mask
+    train_labels = hg['movie'].y[mask]
+    train_pred = out[mask]
+    
+    losses = torch.nn.functional.binary_cross_entropy_with_logits(
+        train_pred, train_labels, reduction='none'
+    ).mean(dim=1)  # Average across classes for each node
+    
+    # Step 2: Sort loss
+    sorted_losses, indices = torch.sort(losses)
+    
+    # Step 3: Strategize Training Schedule
+    size = training_schedule(lam, epoch, T, scheduler)
+    num_nodes = int(len(losses) * size)
+    idx = indices[:num_nodes]
+    loss = losses[idx].mean()
+    
+    # Step 4: Loss backward
+    loss.backward()
+    optimizer.step()
+    
+    return float(loss)
+
 @torch.no_grad()
 def test() -> Dict[str, List[float]]:
     model.eval()
@@ -240,54 +300,70 @@ def test() -> Dict[str, List[float]]:
     return {'micro_f1': [m['micro_f1'] for m in metrics],
             'macro_f1': [m['macro_f1'] for m in metrics]}
 
-# Training loop with early stopping
-best_val_micro_f1 = 0
-best_val_macro_f1 = 0
-best_state = None
-start_patience = patience = 100
+# Main training loop
+if __name__ == '__main__':
+    parser  = argparse.ArgumentParser()
+    parser.add_argument('--with_lts', action='store_true', help='Use LTS for training')
+    parser.add_argument('--patience', type=int, default=100, help='Patience for early stopping')
+    parser.add_argument('--lam', type=float, default=0.2, help='Initial proportion of nodes')
+    parser.add_argument('--T', type=int, default=50, help='Epoch to reach full dataset')
+    parser.add_argument('--scheduler', type=str, default='linear', help='Type of scheduler')
+    parser.add_argument('--epochs', type=int, default=200, help='Number of epochs to train')
+    args = parser.parse_args()
 
-for epoch in range(1, 200):
-    print(f'\nEpoch {epoch}:')
-    loss = train()
-    print(f'Train Loss: {loss:.4f}')
-    metrics = test()
-    
-    val_micro_f1 = metrics['micro_f1'][1]
-    val_macro_f1 = metrics['macro_f1'][1]
-    
-    if best_val_macro_f1 <= val_macro_f1:
-        patience = start_patience
-        best_val_macro_f1 = val_macro_f1
-        best_val_micro_f1 = val_micro_f1
-        best_state = {
-            'epoch': epoch,
-            'model_state': model.state_dict(),
-            'optimizer_state': optimizer.state_dict(),
-            'val_macro_f1': val_macro_f1,
-            'val_micro_f1': val_micro_f1,
-            'test_macro_f1': metrics['macro_f1'][2],
-            'test_micro_f1': metrics['micro_f1'][2]
-        }
-    else:
-        patience -= 1
+    # Initialize LTS parameters
+    lam = args.lam       # Initial proportion of nodes
+    T = args.T           # Epoch when scheduler reaches 1.0
+    scheduler = args.scheduler  # Type of scheduler
 
-    if patience <= 0:
-        print(f'\nEarly stopping after {epoch} epochs!')
-        print(f'Best validation macro F1: {best_val_macro_f1:.4f}')
-        print(f'Best validation micro F1: {best_val_micro_f1:.4f}')
-        print(f'Corresponding test macro F1: {best_state["test_macro_f1"]:.4f}')
-        print(f'Corresponding test micro F1: {best_state["test_micro_f1"]:.4f}')
-        break
+    # Training loop with LTS
+    best_val_micro_f1 = 0
+    best_val_macro_f1 = 0
+    best_state = None
+    start_patience = patience = args.patience
 
-# Load best model
-if best_state is not None:
-    model.load_state_dict(best_state['model_state'])
+    for epoch in range(1, args.epochs + 1):
+        print(f'\nEpoch {epoch}:')
+        loss = train_with_lts(epoch, model, optimizer, hg, lam, T, scheduler) if args.with_lts else train()
+        print(f'Train Loss: {loss:.4f}')
+        metrics = test()
+        
+        val_micro_f1 = metrics['micro_f1'][1]
+        val_macro_f1 = metrics['macro_f1'][1]
+        
+        if best_val_macro_f1 <= val_macro_f1:
+            patience = start_patience
+            best_val_macro_f1 = val_macro_f1
+            best_val_micro_f1 = val_micro_f1
+            best_state = {
+                'epoch': epoch,
+                'model_state': model.state_dict(),
+                'optimizer_state': optimizer.state_dict(),
+                'val_macro_f1': val_macro_f1,
+                'val_micro_f1': val_micro_f1,
+                'test_macro_f1': metrics['macro_f1'][2],
+                'test_micro_f1': metrics['micro_f1'][2]
+            }
+        else:
+            patience -= 1
 
-# Evaluate best model
-test_metrics = test()
-print("\nFinal test metrics:")
-print(f"Micro F1: {test_metrics['micro_f1'][2]:.4f}")
-print(f"Macro F1: {test_metrics['macro_f1'][2]:.4f}")
+        if patience <= 0:
+            print(f'\nEarly stopping after {epoch} epochs!')
+            print(f'Best validation macro F1: {best_val_macro_f1:.4f}')
+            print(f'Best validation micro F1: {best_val_micro_f1:.4f}')
+            print(f'Corresponding test macro F1: {best_state["test_macro_f1"]:.4f}')
+            print(f'Corresponding test micro F1: {best_state["test_micro_f1"]:.4f}')
+            break
 
-# Save best model
-torch.save(model.state_dict(), 'best_model.pth')
+    # Load best model
+    if best_state is not None:
+        model.load_state_dict(best_state['model_state'])
+
+    # Evaluate best model
+    test_metrics = test()
+    print("\nFinal test metrics:")
+    print(f"Micro F1: {test_metrics['micro_f1'][2]:.4f}")
+    print(f"Macro F1: {test_metrics['macro_f1'][2]:.4f}")
+
+    # Save best model
+    torch.save(model.state_dict(), 'best_model.pth')
