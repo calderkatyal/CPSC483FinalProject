@@ -101,7 +101,10 @@ class AutoHGNNConv(MessagePassing):
             edge_type = f'metapath_{metapath_name}'
             self.lin_src[edge_type] = nn.Parameter(torch.empty(1, heads, dim))
             self.lin_dst[edge_type] = nn.Parameter(torch.empty(1, heads, dim))
-
+        self.W_h = nn.Parameter(torch.empty(heads, dim, dim))  # Source transform
+        self.W_t = nn.Parameter(torch.empty(heads, dim, dim))  # Target transform 
+        self.v_a = nn.Parameter(torch.empty(heads, 2*dim))     # Attention vector
+        self.gamma = 0.1  
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -111,6 +114,9 @@ class AutoHGNNConv(MessagePassing):
         glorot(self.lin_dst)
         self.k_lin.reset_parameters()
         glorot(self.q)
+        glorot(self.W_h)
+        glorot(self.W_t)
+        glorot(self.v_a)
 
     def forward(
         self,
@@ -136,7 +142,8 @@ class AutoHGNNConv(MessagePassing):
             dst_type = node_types[0] 
             
             # Encode metapath instances
-            x_src = self.mean_encoder(paths, node_types, x_node_dict)  # [num_instances, heads, dim]
+            #x_src = self.mean_encoder(paths, node_types, x_node_dict)  # [num_instances, heads, dim]
+            x_src = self.multihop_encoder(paths, node_types, x_node_dict)  # [num_instances, heads, dim]
             x_dst = x_node_dict[dst_type] 
 
 
@@ -173,34 +180,65 @@ class AutoHGNNConv(MessagePassing):
             return out_dict, semantic_attn_dict
 
         return out_dict
-    def mean_encoder(self,
-        paths: Tensor,
+    def multihop_encoder(self,
+        paths: Tensor,  # [num_instances, path_length]
         node_types: List[str],
-        x_node_dict: Dict[str, Tensor]
+        x_node_dict: Dict[str, Tensor]  # Dict of node features
     ) -> Tensor:
         """
-        Encodes metapath instances using mean pooling over node features.
-
-        Args:
-            paths (Tensor): Tensor of shape [num_instances, path_length], 
-                            containing indices of nodes in the metapath.
-            node_types (List[str]): List of node types in the metapath.
-            x_node_dict (Dict[str, Tensor]): Dictionary mapping node types to 
-                                            their projected feature tensors.
-
-        Returns:
-            Tensor: Encoded metapath instance features of shape 
-                    [num_instances, heads, dim].
+        Vectorized implementation of multihop attention over paths
         """
-        # Gather projected features for all nodes in paths
+        device = paths.device
+        num_instances, path_length = paths.size()
+        H, D = self.heads, self.out_channels // self.heads
+
+        # Get features for all nodes in all paths
         path_features = []
         for pos, node_type in enumerate(node_types):
             node_indices = paths[:, pos]
-            pos_features = x_node_dict[node_type].to(paths.device).index_select(0, node_indices.to(paths.device))
-            path_features.append(pos_features)
-        # Stack and mean pool [num_instances, path_length, heads, dim]
-        path_features = torch.stack(path_features, dim=1)
-        return torch.mean(path_features, dim=1)  # [num_instances, heads, dim]
+            features = x_node_dict[node_type].to(device).index_select(0, node_indices)
+            path_features.append(features)
+        path_features = torch.stack(path_features, dim=1)  # [num_instances, path_length, heads, dim]
+        
+        # Compute attention scores between consecutive nodes
+        h_src = path_features[:, :-1]  # [num_instances, path_length-1, heads, dim] 
+        h_dst = path_features[:, 1:]   # [num_instances, path_length-1, heads, dim]
+        
+        # Transform node features
+        h_src_transformed = torch.einsum('nphd,hde->nphe', h_src, self.W_h)
+        h_dst_transformed = torch.einsum('nphd,hde->nphe', h_dst, self.W_t)
+        
+        # Compute attention scores
+        concat = torch.cat([h_src_transformed, h_dst_transformed], dim=-1)
+        attn = torch.einsum('nphd,hd->nph', torch.tanh(concat), self.v_a)
+        attn = F.leaky_relu(attn, self.negative_slope)
+        # Normalize attention scores
+        attn = F.softmax(attn, dim=1)  # Normalize across path positions
+
+        print("\nNormalized attention statistics:")
+        print(f"Mean: {attn.mean():.4f}, Std: {attn.std():.4f}")
+        print(f"Min: {attn.min():.4f}, Max: {attn.max():.4f}")
+
+        # Calculate cumulative products WITHOUT inplace operations
+        cum_attn = torch.ones(num_instances, path_length, H, device=device)
+        cum_products = attn[:, 0]  # Start with first attention scores
+        cum_attn = cum_attn.clone()  # Avoid inplace operations
+        cum_attn[:, 1] = cum_products
+        
+        for k in range(2, path_length):
+            cum_products = cum_products * attn[:, k-1]
+            cum_attn[:, k] = cum_products
+        
+        # Compute importance weights
+        hops = torch.arange(path_length, device=device, dtype=torch.float)
+        importance = self.gamma * ((1-self.gamma)**hops)
+        importance = importance.view(1, path_length, 1, 1)  # [1, path_length, 1, 1]
+        
+        # Final aggregation WITHOUT inplace operations
+        weighted = importance * cum_attn.unsqueeze(-1) * path_features
+        output = weighted.sum(dim=1)
+        
+        return output  # [num_instances, heads, dim]
 
 
     def message(self, x_j: Tensor, alpha_i: Tensor, alpha_j: Tensor,

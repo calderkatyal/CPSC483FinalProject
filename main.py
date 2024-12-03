@@ -201,42 +201,44 @@ def training_schedule(lam: float, t: int, T: int, scheduler: str) -> float:
         return min(1.0, 2**(np.log2(lam) - np.log2(lam) * t/T))
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler}")
-def train_with_lts(epoch: int, 
+def train_with_lts(epoch: int,
                    model: torch.nn.Module,
                    optimizer: torch.optim.Optimizer,
                    hg: dict,
                    lam: float = 0.2,
                    T: int = 50,
                    scheduler: str = 'linear') -> float:
-    """
-    Implementation of Algorithm 1: LTS Nodes Difficulty Measure and Training Schedule
-    """
     model.train()
     optimizer.zero_grad()
-    
-    # Step 1: Calculate loss (with reduction='none' to get per-node losses)
+
+    # Step 1: Calculate loss (reduction='none')
     out = model(hg.x_dict, hg.edge_index_dict)
     mask = hg['movie'].train_mask
     train_labels = hg['movie'].y[mask]
     train_pred = out[mask]
-    
-    losses = torch.nn.functional.binary_cross_entropy_with_logits(
+
+    loss = F.binary_cross_entropy_with_logits(
         train_pred, train_labels, reduction='none'
-    ).mean(dim=1)  # Average across classes for each node
-    
+    )
+
     # Step 2: Sort loss
-    sorted_losses, indices = torch.sort(losses)
-    
+    sorted_losses, indices = torch.sort(loss.mean(dim=1))
+
     # Step 3: Strategize Training Schedule
-    size = training_schedule(lam, epoch, T, scheduler)
-    num_nodes = int(len(losses) * size)
-    idx = indices[:num_nodes]
-    loss = losses[idx].mean()
-    
+    if epoch >= T:
+        # Use all nodes after T epochs (mentioned in paper text)
+        loss = loss.mean()
+    else:
+        # Follow Algorithm 1
+        size = training_schedule(lam, epoch, T, scheduler)
+        num_large_losses = int(len(loss) * size)
+        idx = indices[:num_large_losses]
+        loss = loss[idx].mean()
+
     # Step 4: Loss backward
     loss.backward()
     optimizer.step()
-    
+
     return float(loss)
 
 @torch.no_grad()
