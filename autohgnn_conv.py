@@ -28,6 +28,30 @@ def group(
         attn = F.softmax(attn_score, dim=0)
         out = torch.sum(attn.view(num_edge_types, 1, -1) * out, dim=0)
         return out, attn
+def group2(
+    xs: List[Tensor],
+    q: nn.Parameter,
+    k_lin: nn.Module,
+) -> Tuple[OptTensor, OptTensor]:
+    if len(xs) == 0:
+        return None, None
+    else:
+        num_edge_types = len(xs)
+        out = torch.stack(xs)  # Shape: [num_edge_types, num_instances, out_channels]
+        if out.numel() == 0:
+            return out.view(0, out.size(-1)), None
+
+        # Compute attention scores
+        attn_score = (q * torch.tanh(k_lin(out)).mean(1)).sum(-1)  # Shape: [num_edge_types]
+        attn = F.softmax(attn_score, dim=0)  # Softmax across edge types
+        weighted_out = torch.sum(attn.view(num_edge_types, 1, -1) * out, dim=0)  # Weighted sum: [num_instances, out_channels]
+
+        # Add residual connection (mean of all metapaths)
+        residual = out.mean(dim=0)  # Shape: [num_instances, out_channels]
+        out = weighted_out + residual  # Combine weighted output with residual connection
+
+        return out, attn
+
 
 
 class AutoHGNNConv(MessagePassing):
@@ -104,9 +128,11 @@ class AutoHGNNConv(MessagePassing):
         self.W_h = nn.Parameter(torch.empty(heads, dim, dim))  # Source transform
         self.W_t = nn.Parameter(torch.empty(heads, dim, dim))  # Target transform 
         self.v_a = nn.Parameter(torch.empty(heads, 2*dim))     # Attention vector
+        self.attn_scale = nn.Parameter(torch.tensor(1.0))
 
 
-        # Add these parameters to __init__:
+
+        
         self.W_q = nn.Parameter(torch.empty(heads, out_channels // heads))  # Query projection for source node
         
         self.reset_parameters()
@@ -156,7 +182,7 @@ class AutoHGNNConv(MessagePassing):
             elif self.metapath_encoder == 'direct':
                 x_src = self.direct_attention_encoder(paths, node_types, x_node_dict)
             elif self.metapath_encoder == 'multihop2':
-                x_src = self.multihop_encoder2(paths, node_types, x_node_dict)
+                x_src = self.multihop_encoder2(paths, node_types, x_node_dict, metapath_name)
             else:
                 raise ValueError('Invalid metapath encoder')
             
@@ -188,7 +214,7 @@ class AutoHGNNConv(MessagePassing):
         semantic_attn_dict = {}
         for node_type, outs in out_dict.items():
             if len(outs) > 0:  # Only process if we have any metapaths for this node type
-                out, attn = group(outs, self.q.to(device), self.k_lin.to(device))
+                out, attn = group2(outs, self.q.to(device), self.k_lin.to(device))
                 out_dict[node_type] = out
                 semantic_attn_dict[node_type] = attn
 
@@ -232,47 +258,57 @@ class AutoHGNNConv(MessagePassing):
     def multihop_encoder2(self,
         paths: Tensor, 
         node_types: List[str],
-        x_node_dict: Dict[str, Tensor]
-        ) -> Tensor:
-        """
-        Sequential inward attention for arbitrary length metapaths.
-        """
-        # Gather features exactly like mean_encoder 
+        x_node_dict: Dict[str, Tensor], metapath_name: str
+    ) -> Tensor:
+        # Gather and stack features
         path_features = []
         for pos, node_type in enumerate(node_types):
             node_indices = paths[:, pos]
-            pos_features = x_node_dict[node_type].to(paths.device).index_select(0, node_indices.to(paths.device))
+            pos_features = x_node_dict[node_type].to(paths.device).index_select(0, node_indices)
             path_features.append(pos_features)
-                
-        # Stack to get [num_instances, path_length, heads, dim]
-        path_features = torch.stack(path_features, dim=1)
+
+        path_features = torch.stack(path_features, dim=1)  # [num_instances, path_length, heads, dim]
         path_length = path_features.size(1)
-        
+
         # Prepare adjacent pairs
-        outer_nodes = path_features[:, 1:]  
-        inner_nodes = path_features[:, :-1]
-        
-        # Simple attention computation  
-        attn_logits = torch.sum(outer_nodes * inner_nodes, dim=-1)  
-        attn_logits = attn_logits / math.sqrt(self.out_channels // self.heads)
-        print(f"\nAttention logits stats - Mean: {attn_logits.mean():.4f}, Std: {attn_logits.std():.4f}")
-        
-        # Distance decay
-        gamma = 0.5
-        distance_decay = torch.exp(-gamma * torch.arange(1, path_length, device=paths.device))
-        
-        # Attention weights with decay
-        edge_attn = F.softmax(attn_logits * distance_decay.view(1, -1, 1), dim=1)
-        print(f"\nEdge attention stats - Mean: {edge_attn.mean():.4f}, Std: {edge_attn.std():.4f}")
-        
-        # Cumulative attention flow
-        cum_attn = torch.cumprod(edge_attn, dim=1)
-        print(f"\nCumulative attention stats - Mean: {cum_attn.mean():.4f}, Std: {cum_attn.std():.4f}")
-        
-        # Final aggregation
-        out = path_features[:, 0] + (cum_attn.unsqueeze(-1) * path_features[:, 1:]).sum(dim=1)
-        
+        outer_nodes = torch.einsum('nphd,hde->nphe', path_features[:, 1:], self.W_h)
+        inner_nodes = torch.einsum('nphd,hde->nphe', path_features[:, :-1], self.W_t)
+
+        # Compute attention scores
+        concat = torch.cat([inner_nodes, outer_nodes], dim=-1)
+        logits = torch.einsum('nphe,he->nph', torch.tanh(concat), self.v_a)
+
+        # Free intermediate tensors
+        del inner_nodes, outer_nodes, concat
+        torch.cuda.empty_cache()
+
+        # Basic attention scaling
+        attn_logits = F.leaky_relu(logits, self.negative_slope)
+        del logits
+        torch.cuda.empty_cache()
+
+        # PPR weighting
+        gamma = .4
+        attn_weights = torch.sigmoid(attn_logits)  # Raw attention weights
+
+        del attn_logits
+        torch.cuda.empty_cache()
+
+        chain_attn = torch.cumprod(attn_weights, dim=1)  # Multiplicative chain of attention
+
+        # Apply PPR-style geometric weighting
+        hop_weights = gamma * torch.pow(1 - gamma, torch.arange(path_length - 1, device=paths.device))
+        chain_attn = chain_attn * hop_weights.view(1, -1, 1)
+
+        # Aggregate features
+        out = gamma * path_features[:, 0] + (chain_attn.unsqueeze(-1) * path_features[:, 1:]).sum(dim=1)
+
+        # Free chain_attn and hop_weights
+        del chain_attn, hop_weights
+        torch.cuda.empty_cache()
+
         return out
+
     def multihop_encoder(self,
         paths: Tensor,
         node_types: List[str],
@@ -365,10 +401,14 @@ class AutoHGNNConv(MessagePassing):
         self.k_lin.reset_parameters()
         glorot(self.q)
         # Initialize attention parameters with larger values
-        std = 1.0 / math.sqrt(self.out_channels)
+        # Adjusted initialization
+        std = math.sqrt(2.0 / (self.out_channels // self.heads))  # Variance scaling for heads
         self.W_h.data.normal_(0, std)
         self.W_t.data.normal_(0, std)
-        self.v_a.data.normal_(0, std)
+
+        va_std = math.sqrt(1.0 / (2 * (self.out_channels // self.heads)))
+        self.v_a.data.normal_(0, va_std)
+
     def mean_encoder(self,
         paths: Tensor,
         node_types: List[str],

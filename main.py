@@ -97,7 +97,6 @@ else:
     # Store node features
     for node_type in hg.node_types:
         node_features[node_type] = hg[node_type].x
-
     # Apply metapath transform
     transform = MetaPathAdd(
         metapaths=metapaths,
@@ -130,7 +129,6 @@ else:
     # Save preprocessed data
     torch.save({'hg': hg, 'metapath_data': metapath_data, 'features': node_features}, preprocessed_data_path)
 
-# Move graph to device if not already there
 hg = hg.to(device)
 
 # Print metapath data and feature shapes
@@ -245,7 +243,7 @@ def test() -> Dict[str, List[float]]:
     pred[no_pred_mask, max_indices[no_pred_mask]] = 1
 
     metrics = []
-    for split in ['train_mask', 'val_mask', 'test_mask']:  # Using PyG's convention
+    for split in ['train_mask', 'val_mask', 'test_mask']:  
         mask = hg['movie'][split]
         y_true = hg['movie'].y[mask]
         y_pred = pred[mask]
@@ -291,6 +289,16 @@ def test() -> Dict[str, List[float]]:
     
     return {'micro_f1': [m['micro_f1'] for m in metrics],
             'macro_f1': [m['macro_f1'] for m in metrics]}
+def set_seed(seed: int):
+    random.seed(seed)  # Python random
+    np.random.seed(seed)  # NumPy random
+    torch.manual_seed(seed)  # PyTorch CPU
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)  # PyTorch GPU
+        torch.cuda.manual_seed_all(seed)  # All GPUs
+    # Ensures reproducibility when using CuDNN
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 # Main training loop
 if __name__ == '__main__':
