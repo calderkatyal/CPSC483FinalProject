@@ -181,8 +181,6 @@ class AutoHGNNConv(MessagePassing):
                 x_src = self.gat_encoder(paths, node_types, x_node_dict)
             elif self.metapath_encoder == 'direct':
                 x_src = self.direct_attention_encoder(paths, node_types, x_node_dict)
-            elif self.metapath_encoder == 'multihop2':
-                x_src = self.multihop_encoder2(paths, node_types, x_node_dict, metapath_name)
             else:
                 raise ValueError('Invalid metapath encoder')
             
@@ -194,7 +192,6 @@ class AutoHGNNConv(MessagePassing):
                 torch.arange(len(paths), device=device),
                 paths[:, 0] 
             ])
-
 
             # Instance-level attention aggregation
             edge_type = f'metapath_{metapath_name}'
@@ -255,10 +252,10 @@ class AutoHGNNConv(MessagePassing):
         
         return out
         
-    def multihop_encoder2(self,
+    def multihop_encoder(self,
         paths: Tensor, 
         node_types: List[str],
-        x_node_dict: Dict[str, Tensor], metapath_name: str
+        x_node_dict: Dict[str, Tensor]
     ) -> Tensor:
         # Gather and stack features
         path_features = []
@@ -290,6 +287,14 @@ class AutoHGNNConv(MessagePassing):
         # PPR weighting
         gamma = .4
         attn_weights = torch.sigmoid(attn_logits)  # Raw attention weights
+        
+        if self.training:
+            # Pick a random instance to debug
+            idx = torch.randint(0, paths.size(0), (1,)).item()
+            print(f"\nInstance {idx} Details:")
+            print(f"Path: {paths[idx].tolist()}")
+            print(f"Attention Logits: {attn_logits[idx].cpu().detach().numpy()}")
+            print(f"Final Weights: {attn_weights[idx].cpu().detach().numpy()}")
 
         del attn_logits
         torch.cuda.empty_cache()
@@ -309,89 +314,6 @@ class AutoHGNNConv(MessagePassing):
 
         return out
 
-    def multihop_encoder(self,
-        paths: Tensor,
-        node_types: List[str],
-        x_node_dict: Dict[str, Tensor]
-    ) -> Tensor:
-        device = paths.device
-        num_instances, path_length = paths.size()
-        H, D = self.heads, self.out_channels // self.heads
-        gamma = torch.tensor(0.1)  # Fixed gamma value for decay
-        chunk_size = 1024  # Process in chunks to save memory
-
-        outputs = []
-        for start_idx in range(0, num_instances, chunk_size):
-            end_idx = min(start_idx + chunk_size, num_instances)
-            paths_chunk = paths[start_idx:end_idx]
-            
-            # Get path features
-            path_features = []
-            for pos, node_type in enumerate(node_types):
-                node_indices = paths_chunk[:, pos]
-                features = x_node_dict[node_type].to(device).index_select(0, node_indices)
-                path_features.append(features)
-            path_features = torch.stack(path_features, dim=1)
-            """
-            with torch.no_grad():
-                print(f"\nProcess path of length {path_length}:")
-                print(f"Node types: {node_types}")
-                print(f"Feature shape: {path_features.shape}")
-            """
-            # Compute pairwise attentions - flipped for inward flow
-            h_dst = path_features[:, :-1]  # nodes receiving messages
-            h_src = path_features[:, 1:]   # nodes sending messages
-            
-            # Transform features
-            h_src_t = torch.einsum('nphd,hde->nphe', h_src, self.W_h)
-            h_dst_t = torch.einsum('nphd,hde->nphe', h_dst, self.W_t)
-            
-            # Compute attention scores flowing inward
-            concat = torch.cat([h_dst_t, h_src_t], dim=-1)  
-            attn_logits = torch.einsum('nphd,hd->nph', torch.tanh(concat), self.v_a)
-            edge_attn = torch.sigmoid(F.leaky_relu(attn_logits, self.negative_slope))
-            if self.training:
-                edge_attn = F.dropout(edge_attn, p=0.1, training=self.training)
-            """
-            with torch.no_grad():
-                print("\nPairwise attention scores:")
-                print(f"Mean: {edge_attn.mean():.4f}, Std: {edge_attn.std():.4f}")
-                for i in range(path_length-1):
-                    print(f"Edge {i+1}->{i}: {edge_attn[:,i].mean():.4f} ± {edge_attn[:,i].std():.4f}")
-            """
-            # Initialize output with first node (source node)
-            chunk_output = path_features[:, 0]
-            
-            # Handle k>0 cases
-            for k in range(1, path_length):
-                # Compute exponential decay (close nodes still weighted higher)
-                decay = torch.exp(-gamma * k)
-                
-                # Get attention scores along path back to source
-                if k == 1:
-                    k_attentions = edge_attn[:, 0:1]  # just 1→0
-                else:
-                    k_attentions = torch.flip(edge_attn[:, :k], dims=[1])
-                # Compute product of attentions along path
-                attn_prod = torch.prod(k_attentions, dim=1)
-                
-                # Combine decay with attention product
-                coef = decay * attn_prod
-                """"
-                with torch.no_grad():
-                    print(f"\nPosition {k}:")
-                    print(f"Decay term (e^(-{gamma}*{k})): {decay:.4f}")
-                    print(f"Attention product - Mean: {attn_prod.mean():.4f}, Std: {attn_prod.std():.4f}")
-                    print(f"Final coef - Mean: {coef.mean():.4f}, Std: {coef.std():.4f}")
-                """
-                # Add contribution
-                chunk_output = chunk_output + coef.unsqueeze(-1) * path_features[:, k]
-            
-            outputs.append(chunk_output)
-            del path_features, h_dst, h_src, h_src_t, h_dst_t, concat, attn_logits, edge_attn
-            torch.cuda.empty_cache()
-
-        return torch.cat(outputs, dim=0)
     
     def reset_parameters(self):
         super().reset_parameters()

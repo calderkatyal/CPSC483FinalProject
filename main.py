@@ -13,6 +13,7 @@ from typing import Tuple
 from MetaPathAdd import MetaPathAdd
 from autohgnn_conv import AutoHGNNConv
 import argparse
+import random
 
 preprocessed_data_path = 'preprocessed_hg.pt'
 
@@ -30,10 +31,18 @@ print(f"Training samples: {train_mask.sum() / len(train_mask) * 100}%")
 print(f"Validation samples: {valid_mask.sum() / len(valid_mask) * 100}%")
 print(f"Test samples: {test_mask.sum() / len(test_mask) * 100}%")
 
+"""
 metapaths = [
     [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')],  # MDM
     [('movie', 'to_actor', 'actor'), ('actor', 'to_movie', 'movie')]           # MAM
 
+]
+"""
+metapaths = [
+    [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')],  # MDM
+    [('movie', 'to_actor', 'actor'), ('actor', 'to_movie', 'movie')],          # MAM
+    [('movie', 'to_keyword', 'keyword'), ('keyword', 'to_movie', 'movie')],     # MKM
+    [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')]  # MDM
 ]
 
 
@@ -312,6 +321,8 @@ if __name__ == '__main__':
     parser.add_argument('--metapath_encoder', type=str, default='multihop', help='Type of metapath encoder')
     args = parser.parse_args()
     # Initialize model
+    SEED=483
+    set_seed(SEED)
     in_channels = {node_type: node_features[node_type].shape[1] for node_type in node_features}
     model = AutoHGNN(in_channels=in_channels, out_channels=num_labels, metapath_encoder = args. metapath_encoder)
     model = model.to(device)
