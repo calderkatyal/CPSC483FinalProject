@@ -33,7 +33,9 @@ print(f"Test samples: {test_mask.sum() / len(test_mask) * 100}%")
 metapaths = [
     [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')],  # MDM
     [('movie', 'to_actor', 'actor'), ('actor', 'to_movie', 'movie')]           # MAM
+
 ]
+
 
 # Print initial graph stats
 print("\nBefore metapath transform:")
@@ -141,7 +143,7 @@ for node_type, feat_tensor in node_features.items():
 
 class AutoHGNN(nn.Module):
     def __init__(self, in_channels: Union[int, Dict[str, int]],
-                 out_channels: int, hidden_channels=128, heads=8):
+                 out_channels: int, hidden_channels=128, heads=8, metapath_encoder='multihop'):
         super().__init__()
         self.autohgnn_conv = AutoHGNNConv(
             in_channels, hidden_channels, 
@@ -149,7 +151,8 @@ class AutoHGNN(nn.Module):
             dropout=0.6, 
             metadata=hg.metadata(),
             metapath_data=metapath_data,
-            node_features=node_features
+            node_features=node_features,
+            metapath_encoder=metapath_encoder,
         )
         self.lin = nn.Linear(hidden_channels, out_channels)
 
@@ -157,19 +160,6 @@ class AutoHGNN(nn.Module):
         out = self.autohgnn_conv(x_dict, edge_index_dict)
         out = self.lin(out['movie'])
         return out
-
-# Initialize model
-in_channels = {node_type: node_features[node_type].shape[1] for node_type in node_features}
-model = AutoHGNN(in_channels=in_channels, out_channels=num_labels)
-model = model.to(device)
-
-# Initialize lazy modules
-with torch.no_grad():
-    out = model(hg.x_dict, hg.edge_index_dict)
-
-# Optimizer setup
-optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.001)
-
 def train() -> float:
     model.train()
     optimizer.zero_grad()
@@ -311,8 +301,19 @@ if __name__ == '__main__':
     parser.add_argument('--T', type=int, default=50, help='Epoch to reach full dataset')
     parser.add_argument('--scheduler', type=str, default='linear', help='Type of scheduler')
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs to train')
+    parser.add_argument('--metapath_encoder', type=str, default='multihop', help='Type of metapath encoder')
     args = parser.parse_args()
+    # Initialize model
+    in_channels = {node_type: node_features[node_type].shape[1] for node_type in node_features}
+    model = AutoHGNN(in_channels=in_channels, out_channels=num_labels, metapath_encoder = args. metapath_encoder)
+    model = model.to(device)
 
+    # Initialize lazy modules
+    with torch.no_grad():
+        out = model(hg.x_dict, hg.edge_index_dict)
+
+    # Optimizer setup
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.001)
     # Initialize LTS parameters
     lam = args.lam       # Initial proportion of nodes
     T = args.T           # Epoch when scheduler reaches 1.0
