@@ -42,7 +42,7 @@ metapaths = [
     [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')],  # MDM
     [('movie', 'to_actor', 'actor'), ('actor', 'to_movie', 'movie')],          # MAM
     [('movie', 'to_keyword', 'keyword'), ('keyword', 'to_movie', 'movie')],     # MKM
-    [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')]  # MDM
+    [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie'), ('movie', 'to_director', 'movie')]  # MDM
 ]
 
 
