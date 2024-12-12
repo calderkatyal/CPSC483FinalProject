@@ -1,7 +1,9 @@
 # Ignore data directories
 /data/
-/LMSPS/data/
-/LMSPS/downloads/
+
+info.txt
+
+/images
 
 # Ignore image files
 *.png
@@ -27,15 +29,11 @@ __pycache__/
 testVenv/
 
 # Ignore output directories
-/LMSPS/hgb/output/
-
-# Ignore specific large directories
-/LMSPS/hgb/pytorch_sparse/
-
-# Ignore Docker-related files
-Dockerfile
+/LMSPS/
 
 # Keep .gitignore
 !.gitignore
+
+best_model.pth
 
 preprocessed_hg.pt

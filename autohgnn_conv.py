@@ -129,10 +129,7 @@ class AutoHGNNConv(MessagePassing):
         self.W_t = nn.Parameter(torch.empty(heads, dim, dim))  # Target transform 
         self.v_a = nn.Parameter(torch.empty(heads, 2*dim))     # Attention vector
         self.attn_scale = nn.Parameter(torch.tensor(1.0))
-
-        
-        self.W_q = nn.Parameter(torch.empty(heads, out_channels // heads))  # Query projection for source node
-        
+    
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -145,7 +142,7 @@ class AutoHGNNConv(MessagePassing):
         glorot(self.W_h)
         glorot(self.W_t)
         glorot(self.v_a)
-        glorot(self.W_q)
+
 
     def forward(
         self,
@@ -223,30 +220,24 @@ class AutoHGNNConv(MessagePassing):
         node_types: List[str],
         x_node_dict: Dict[str, Tensor]
     ) -> Tensor:
-        """
-        Efficient encoder using source node attention
-        """
-        # Gather features for all nodes in paths (same as mean_encoder)
         path_features = []
         for pos, node_type in enumerate(node_types):
             node_indices = paths[:, pos]
-            pos_features = x_node_dict[node_type].to(paths.device).index_select(0, node_indices.to(paths.device))
+            pos_features = x_node_dict[node_type].to(paths.device).index_select(0, node_indices)
             path_features.append(pos_features)
-            
-        # Stack to get [num_instances, path_length, heads, dim]
+        
         path_features = torch.stack(path_features, dim=1)
         
-        # Calculate attention scores from source to all positions
-        source_features = path_features[:, 0].unsqueeze(1)  # [num_instances, 1, heads, dim]
-        scores = torch.einsum('nihd,hd->nih', source_features, self.W_q)  # [num_instances, 1, heads]
-        scores = scores.expand(-1, path_features.size(1), -1)  # [num_instances, path_length, heads]
+        # Transform features - nodes attend TO source
+        source = torch.einsum('nphd,hde->nphe', path_features[:, 0:1], self.W_t)  # Source is target
+        nodes = torch.einsum('nphd,hde->nphe', path_features, self.W_h)           # All nodes are source of attention
+        
+        # Compute attention scores with sigmoid instead of softmax
+        scores = torch.einsum('nphe,nqhe->nqh', source, nodes)
         scores = scores / math.sqrt(self.out_channels // self.heads)
         
-        # Softmax over path length dimension
-        attn = F.softmax(scores, dim=1).unsqueeze(-1)  # [num_instances, path_length, heads, 1]
-        
-        # Weighted sum
-        out = (attn * path_features).sum(dim=1)  # [num_instances, heads, dim]
+        attn = torch.sigmoid(scores).unsqueeze(-1)
+        out = (attn * path_features).sum(dim=1)
         
         return out
         
@@ -262,6 +253,7 @@ class AutoHGNNConv(MessagePassing):
                 pos_features = x_node_dict[node_type].to(paths.device).index_select(0, node_indices)
                 path_features.append(pos_features)
 
+            gamma = .4
             path_features = torch.stack(path_features, dim=1)  
             path_length = path_features.size(1)
             path_features = torch.cat([path_features[:, :1], path_features], dim=1) 
@@ -281,8 +273,8 @@ class AutoHGNNConv(MessagePassing):
             del logits
             torch.cuda.empty_cache()
 
-            gamma = .4
             attn_weights = torch.sigmoid(attn_logits)  
+            
             
             if self.training:
                 idx = torch.randint(0, paths.size(0), (1,)).item()
@@ -290,7 +282,7 @@ class AutoHGNNConv(MessagePassing):
                 print(f"Path: {paths[idx].tolist()}")
                 print(f"Attention Logits: {attn_logits[idx].cpu().detach().numpy()}")
                 print(f"Final Weights: {attn_weights[idx].cpu().detach().numpy()}")
-
+            
             del attn_logits
             torch.cuda.empty_cache()
 

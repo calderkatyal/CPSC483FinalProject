@@ -27,24 +27,21 @@ assert (train_mask & valid_mask).sum() == 0, "Train and validation masks overlap
 assert (train_mask & test_mask).sum() == 0, "Train and test masks overlap!"
 assert (valid_mask & test_mask).sum() == 0, "Validation and test masks overlap!"
 
-print(f"Training samples: {train_mask.sum() / len(train_mask) * 100}%")
-print(f"Validation samples: {valid_mask.sum() / len(valid_mask) * 100}%")
-print(f"Test samples: {test_mask.sum() / len(test_mask) * 100}%")
+print(f"Number of training samples: {train_mask.sum()}")
+print(f"Number of validation samples: {valid_mask.sum()}")
+print(f"Number of test samples: {test_mask.sum()}")
+print(f"Training percent: {train_mask.sum() / len(train_mask) * 100}%")
+print(f"Validation percent: {valid_mask.sum() / len(valid_mask) * 100}%")
+print(f"Test percent: {test_mask.sum() / len(test_mask) * 100}%")
 
-"""
+
+
+
 metapaths = [
     [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')],  # MDM
     [('movie', 'to_actor', 'actor'), ('actor', 'to_movie', 'movie')]           # MAM
 
 ]
-"""
-metapaths = [
-    [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie')],  # MDM
-    [('movie', 'to_actor', 'actor'), ('actor', 'to_movie', 'movie')],          # MAM
-    [('movie', 'to_keyword', 'keyword'), ('keyword', 'to_movie', 'movie')],     # MKM
-    [('movie', 'to_director', 'director'), ('director', 'to_movie', 'movie'), ('movie', 'to_director', 'movie')]  # MDM
-]
-
 
 # Print initial graph stats
 print("\nBefore metapath transform:")
@@ -299,6 +296,7 @@ def test() -> Dict[str, List[float]]:
     return {'micro_f1': [m['micro_f1'] for m in metrics],
             'macro_f1': [m['macro_f1'] for m in metrics]}
 def set_seed(seed: int):
+    os.environ['PYTHONHASHSEED'] = str(seed)  # For Python hash randomization
     random.seed(seed)  # Python random
     np.random.seed(seed)  # NumPy random
     torch.manual_seed(seed)  # PyTorch CPU
