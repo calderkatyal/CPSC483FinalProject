@@ -1,17 +1,15 @@
-import os.path as osp
 from typing import Dict, List, Union
 import os
 import torch
 import torch.nn.functional as F
 from torch import nn
-import torch_geometric
 import torch_geometric.transforms as T
-from load_imdb import load_imdb, data_loader
+from torch_geometric.nn.conv import HANConv
+from load_imdb import load_imdb
 import numpy as np
 from torch_scatter import scatter_mean
-from typing import Tuple
 from MetaPathAdd import MetaPathAdd
-from autohgnn_conv import AutoHGNNConv
+from HANME_conv import HANMEConv
 import argparse
 import random
 
@@ -26,15 +24,6 @@ hg, features, labels, num_labels, train_indices, valid_indices, test_indices, \
 assert (train_mask & valid_mask).sum() == 0, "Train and validation masks overlap!"
 assert (train_mask & test_mask).sum() == 0, "Train and test masks overlap!"
 assert (valid_mask & test_mask).sum() == 0, "Validation and test masks overlap!"
-
-print(f"Number of training samples: {train_mask.sum()}")
-print(f"Number of validation samples: {valid_mask.sum()}")
-print(f"Number of test samples: {test_mask.sum()}")
-print(f"Training percent: {train_mask.sum() / len(train_mask) * 100}%")
-print(f"Validation percent: {valid_mask.sum() / len(valid_mask) * 100}%")
-print(f"Test percent: {test_mask.sum() / len(test_mask) * 100}%")
-
-
 
 
 metapaths = [
@@ -145,11 +134,11 @@ print(firstpairs)
 for node_type, feat_tensor in node_features.items():
     print(f"{node_type} features shape: {feat_tensor.shape}")
 
-class AutoHGNN(nn.Module):
+class HANME(nn.Module):
     def __init__(self, in_channels: Union[int, Dict[str, int]],
                  out_channels: int, hidden_channels=128, heads=8, metapath_encoder='multihop'):
         super().__init__()
-        self.autohgnn_conv = AutoHGNNConv(
+        self.HANME_conv = HANMEConv(
             in_channels, hidden_channels, 
             heads=heads,
             dropout=0.6, 
@@ -161,9 +150,25 @@ class AutoHGNN(nn.Module):
         self.lin = nn.Linear(hidden_channels, out_channels)
 
     def forward(self, x_dict, edge_index_dict):
-        out = self.autohgnn_conv(x_dict, edge_index_dict)
+        out = self.HANME_conv(x_dict, edge_index_dict)
         out = self.lin(out['movie'])
         return out
+class HAN(nn.Module):
+    def __init__(self, in_channels: Union[int, Dict[str, int]],
+                 out_channels: int, hidden_channels=128, heads=8):
+        super().__init__()
+        self.han_conv = HANConv(
+            in_channels, hidden_channels, heads=heads,
+            dropout=0.6, metadata=hg.metadata()
+        )
+        self.lin = nn.Linear(hidden_channels, out_channels)
+
+    def forward(self, x_dict, edge_index_dict):
+        out = self.han_conv(x_dict, edge_index_dict)
+        out = self.lin(out['movie'])
+        return out
+    
+    
 def train() -> float:
     model.train()
     optimizer.zero_grad()
@@ -316,13 +321,28 @@ if __name__ == '__main__':
     parser.add_argument('--T', type=int, default=50, help='Epoch to reach full dataset')
     parser.add_argument('--scheduler', type=str, default='linear', help='Type of scheduler')
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs to train')
+    parser.add_argument('--model', type=str, default='HANME', choices=['HANME', 'HAN'])
     parser.add_argument('--metapath_encoder', type=str, default='multihop', help='Type of metapath encoder')
     args = parser.parse_args()
     # Initialize model
     SEED=483
     set_seed(SEED)
-    in_channels = {node_type: node_features[node_type].shape[1] for node_type in node_features}
-    model = AutoHGNN(in_channels=in_channels, out_channels=num_labels, metapath_encoder = args. metapath_encoder)
+
+    print("Custom transform metadata:", hg.metadata())
+
+
+    if args.model == 'han':
+        print("\nInitializing HAN model...")
+        model = HAN(in_channels={'movie': features.shape[1]}, 
+                   out_channels=num_labels)
+    else:  # HANME
+        print("\nInitializing HANME model...")
+        in_channels = {node_type: node_features[node_type].shape[1] 
+                        for node_type in node_features}
+        model = HANME(in_channels=in_channels, 
+                        out_channels=num_labels, 
+                        metapath_encoder=args.metapath_encoder)
+
     model = model.to(device)
 
     # Initialize lazy modules

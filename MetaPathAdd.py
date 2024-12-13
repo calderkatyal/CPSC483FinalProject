@@ -1,3 +1,9 @@
+"""
+*******************************************************************
+Modifification of torch_geometric.transforms.AddMetaPaths which stores
+node types and metapath instances in a dictionary
+*******************************************************************
+"""
 import warnings
 from typing import List, Optional, Tuple, Dict, Union, cast
 
@@ -11,9 +17,6 @@ from torch_geometric.transforms import BaseTransform
 from torch_geometric.typing import EdgeType
 from torch_geometric.utils import coalesce, degree
 from tqdm import tqdm
-
-# Ideas: remove node features for movie nodes
-# Remove all features and just have them all in one big dictionary and fetch them as needed
 
 class MetaPathAdd(BaseTransform):
     r"""Adds additional edge types to a
@@ -190,25 +193,10 @@ class MetaPathAdd(BaseTransform):
             if self.weighted:
                 data[new_edge_type].edge_weight = edge_weight
             data.metapath_dict[new_edge_type] = metapath
-
-            # Collect features for each path
-
-            """
-            features = []
-            for path in tqdm(current_paths, desc='Collecting features'):
-                node_features = []
-                node_types_in_path = [metapath[0][0]] + [e[2] for e in metapath]
-                for idx, node_type in zip(path, node_types_in_path):
-                    node_feat = data[node_type].x[idx]
-                    node_features.append(node_feat.tolist())
-                features.append(node_features)
-            """
-
-            # Map metapath index to name 
+           # Map metapath index to name 
             metapath_key = f'metapath_{j}'
             metapath_name = metapath_key 
 
-           
 
             metapath_data[metapath_name] = {
                 'node_types_list': [metapath[0][0]] + [e[2] for e in metapath],
