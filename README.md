@@ -34,22 +34,19 @@ python main.py [options]
 - `--T`: The epoch at which the training schedule reaches the full dataset (LTS). Default: `50`.
 - `--scheduler`: Type of scheduler to use with LTS. Options: `linear`, `root`, or `geom`. Default: `linear`.
 - `--epochs`: The total number of epochs to train the model. Default: `200`.
+- `--model`: Specify HANME or HAN. Default: `HAN`.
 - `--metapath_encoder`: Specify the metapath encoder type. Options: `multihop`, `direct`, `mean`. Default: `multihop`.
 
-#### Example Usage:
+#### Replicating our Results:
 1. To train the model without LTS:
    ```bash
-   python main.py
+   python main.py --metapath_encoder=multihop
+   python main.py --metapath_encoder=direct
+   python main.py --model=HAN
    ```
-2. To train the model with LTS using a geometric scheduler:
+2. To train the model with LTS using a linear scheduler:
    ```bash
-   python main.py --with_lts --scheduler geom --epochs 200 --lam 0.3 --T 60
+   python main.py --metapath_encoder=multihop --with_lts --scheduler=linear --lam=0.1 --T=100
+   python main.py --metapath_encoder=direct --with_lts --scheduler=linear --lam=0.1 --T=100
+   python main.py --model=HAN --with_lts --scheduler=linear --lam=0.1 --T=100
    ```
-
-
-
-
-To run the vanilla HAN model:
-```
-python han_main
-```
