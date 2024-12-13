@@ -37,7 +37,7 @@ python main.py [options]
 - `--model`: Specify HANME or HAN. Default: `HAN`.
 - `--metapath_encoder`: Specify the metapath encoder type. Options: `multihop`, `direct`, `mean`. Default: `multihop`.
 
-#### Replicating our Results:
+### Replicating our Results:
 1. To train the model without LTS:
    ```bash
    python main.py --metapath_encoder=multihop
