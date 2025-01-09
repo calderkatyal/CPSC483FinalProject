@@ -1,6 +1,6 @@
 ### Overview
 
-Main repository for "Attention-Driven Metapath Encoding in Heterogeneous Graphs." The project uses the Pytorch Geometric framework and implements two attention-based metapath instance encoders. It furthermore implements from scratch the Loss-Aware Training Scheduler outlined in "Loss-aware Curriculum Learning for Heterogeneous Graph Neural Networks" [https://arxiv.org/abs/2402.18875](url). Included is an implementation of the base model HAN [https://arxiv.org/abs/1903.07293](url) which has been migrated to PyTorch Geometric and optimized. The model is trained on the IMDB dataset released in [https://arxiv.org/abs/2112.14936](url) using the CrawlScript found at [https://github.com/CrawlScript/gnn_datasets/](url).
+Main repository for "Attention-Driven Metapath Encoding in Heterogeneous Graphs." The project uses the PyTorch Geometric framework and implements two attention-based metapath instance encoders. It furthermore implements from scratch the Loss-Aware Training Scheduler outlined in "Loss-aware Curriculum Learning for Heterogeneous Graph Neural Networks" [https://arxiv.org/abs/2402.18875](url). Included is an implementation of the base model HAN [https://arxiv.org/abs/1903.07293](url) which has been migrated to PyTorch Geometric and optimized. The model is trained on the IMDB dataset released in [https://arxiv.org/abs/2112.14936](url) using the CrawlScript found at [https://github.com/CrawlScript/gnn_datasets/](url).
 
 ### Setup
 ```
